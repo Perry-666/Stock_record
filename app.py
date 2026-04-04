@@ -2948,6 +2948,45 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+def get_app_password_secret():
+    try:
+        password_from_secrets = st.secrets.get("APP_PASSWORD")
+    except Exception:
+        password_from_secrets = None
+    return password_from_secrets or os.environ.get("APP_PASSWORD")
+
+
+def require_app_password():
+    if st.session_state.get("app_password_verified"):
+        return
+
+    expected_password = get_app_password_secret()
+    st.markdown("### 進入多帳戶波段交易與 AI 記帳系統")
+
+    if not expected_password:
+        st.error("尚未設定 APP_PASSWORD，請先在 Streamlit Secrets 或本機 .env 裡補上。")
+        st.stop()
+
+    input_password = st.text_input(
+        "請輸入系統密碼",
+        type="password",
+        key="app_password_input",
+        placeholder="輸入通關密碼後才會顯示交易系統",
+    )
+
+    if input_password == expected_password:
+        st.session_state["app_password_verified"] = True
+        st.rerun()
+
+    if input_password:
+        st.error("密碼錯誤，請再試一次。")
+
+    st.stop()
+
+
+require_app_password()
+
 st.title("📈 多帳戶波段交易與 AI 記帳系統")
 
 try:
