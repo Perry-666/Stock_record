@@ -1,0 +1,18 @@
+# 安全性 - 不要上傳這些檔案到版本控制
+.env
+*.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+
+# DB files
+*.db
+*.sqlite
+
+# Streamlit
+.streamlit/secrets.toml
