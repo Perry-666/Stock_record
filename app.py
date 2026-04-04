@@ -1620,22 +1620,18 @@ def render_dashboard_metric_strip(metric_items):
         value_color = item.get("value_color", "#f8fafc")
         accent_color = item.get("accent_color", "#38bdf8")
         rows_html.append(
-            f"""
-            <div class="dashboard-strip-row">
-              <div class="dashboard-strip-meta">
-                <div class="dashboard-strip-dot" style="background:{accent_color};"></div>
-                <div>
-                  <div class="dashboard-strip-label">{label}</div>
-                  <div class="dashboard-strip-sub">{sub_text}</div>
-                </div>
-              </div>
-              <div class="dashboard-strip-value" style="color:{value_color};">{value}</div>
-            </div>
-            """
+            "<div class='dashboard-inline-metric'>"
+            "<div class='dashboard-inline-metric-head'>"
+            f"<div class='dashboard-strip-dot' style='background:{accent_color};'></div>"
+            f"<div class='dashboard-strip-label'>{label}</div>"
+            "</div>"
+            f"<div class='dashboard-strip-value' style='color:{value_color};'>{value}</div>"
+            f"<div class='dashboard-strip-sub'>{sub_text}</div>"
+            "</div>"
         )
 
     st.markdown(
-        f"<div class='dashboard-strip-panel'>{''.join(rows_html)}</div>",
+        f"<div class='dashboard-inline-strip'>{''.join(rows_html)}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2473,7 +2469,7 @@ st.markdown(
     """
 <style>
     .stApp { background-color: #0e1117; font-family: 'Inter', sans-serif; }
-    .metric-card { background: linear-gradient(135deg, #1f2937, #111827); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); margin-bottom: 20px; color: white; }
+    .metric-card { background: transparent; padding: 8px 0; border-radius: 0; box-shadow: none; margin-bottom: 14px; color: white; }
     .metric-value { font-size: 28px; font-weight: 700; color: #38bdf8; }
     div[data-testid="stPopoverBody"] { width: min(1080px, 92vw); }
     .trade-reminder-box {
@@ -2547,15 +2543,13 @@ st.markdown(
         flex-direction: column;
         justify-content: flex-start;
         box-sizing: border-box;
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        border-radius: 22px;
-        padding: 18px 20px 16px;
-        background:
-            radial-gradient(circle at top right, rgba(56, 189, 248, 0.10), transparent 35%),
-            linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.90));
-        box-shadow: 0 18px 36px rgba(2, 6, 23, 0.22);
-        min-height: 168px;
-        height: 168px;
+        border: 0;
+        border-radius: 0;
+        padding: 8px 2px;
+        background: transparent;
+        box-shadow: none;
+        min-height: 128px;
+        height: auto;
     }
     .big-value-label {
         color: #94a3b8;
@@ -2588,8 +2582,8 @@ st.markdown(
         text-overflow: ellipsis;
     }
     .holdings-stat-card {
-        min-height: 168px;
-        height: 168px;
+        min-height: 128px;
+        height: auto;
     }
     .trade-cycle-dual-card {
         min-height: 168px;
@@ -2615,10 +2609,10 @@ st.markdown(
     }
     .cycle-kv-card {
         box-sizing: border-box;
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        border-radius: 22px;
-        padding: 12px 16px;
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.90));
+        border: 0;
+        border-radius: 0;
+        padding: 6px 2px;
+        background: transparent;
         height: fit-content;
     }
     .cycle-kv-row {
@@ -2655,12 +2649,10 @@ st.markdown(
         justify-content: space-between;
         gap: 18px;
         min-height: 220px;
-        padding: 24px 26px;
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        border-radius: 22px;
-        background:
-            radial-gradient(circle at center, rgba(56, 189, 248, 0.08), transparent 35%),
-            linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.90));
+        padding: 8px 4px;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
     }
     .cycle-flow-endpoint {
         flex: 1 1 0;
@@ -2746,20 +2738,15 @@ st.markdown(
         flex-direction: column;
         justify-content: center;
         overflow: hidden;
-        border: 1px solid rgba(148, 163, 184, 0.16);
-        border-radius: 26px;
-        padding: 22px 24px 20px;
-        background:
-            radial-gradient(circle at top right, rgba(255, 255, 255, 0.06), transparent 32%),
-            linear-gradient(135deg, #0f172a 0%, #111827 55%, #0b1220 100%);
-        box-shadow: 0 24px 50px rgba(0, 0, 0, 0.32);
-        min-height: 145px;
+        border: 0;
+        border-radius: 0;
+        padding: 8px 0;
+        background: transparent;
+        box-shadow: none;
+        min-height: 120px;
     }
     .dashboard-stat-topline {
-        position: absolute;
-        inset: 0 0 auto;
-        height: 4px;
-        opacity: 0.9;
+        display: none;
     }
     .dashboard-stat-label {
         color: #94a3b8;
@@ -2804,7 +2791,7 @@ st.markdown(
         color: #f8fafc;
         font-size: clamp(3rem, 6vw, 4.8rem);
         line-height: 0.95;
-        font-weight: 900;
+        font-weight: 700;
         letter-spacing: -0.06em;
         font-variant-numeric: tabular-nums;
     }
@@ -2845,29 +2832,22 @@ st.markdown(
         line-height: 1.35;
         color: #cbd5e1;
     }
-    .dashboard-strip-panel {
-        box-sizing: border-box;
-        min-height: 330px;
-        padding: 14px 22px;
-        border-radius: 34px;
-        background: rgba(15, 23, 42, 0.36);
-        border: 1px solid rgba(148, 163, 184, 0.10);
+    .dashboard-inline-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 22px;
+        margin-top: 26px;
+        padding: 0 4px;
     }
-    .dashboard-strip-row {
+    .dashboard-inline-metric {
+        min-width: 0;
+        padding-top: 14px;
+        border-top: 1px solid rgba(148, 163, 184, 0.16);
+    }
+    .dashboard-inline-metric-head {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        padding: 16px 0;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.10);
-    }
-    .dashboard-strip-row:last-child {
-        border-bottom: none;
-    }
-    .dashboard-strip-meta {
-        display: flex;
-        align-items: center;
-        gap: 14px;
+        gap: 10px;
         min-width: 0;
     }
     .dashboard-strip-dot {
@@ -2879,7 +2859,7 @@ st.markdown(
     }
     .dashboard-strip-label {
         color: #e5e7eb;
-        font-size: 0.95rem;
+        font-size: 0.84rem;
         font-weight: 800;
         letter-spacing: 0.02em;
         white-space: nowrap;
@@ -2887,14 +2867,15 @@ st.markdown(
         text-overflow: ellipsis;
     }
     .dashboard-strip-sub {
-        margin-top: 4px;
+        margin-top: 8px;
         color: #94a3b8;
         font-size: 0.82rem;
         line-height: 1.35;
         font-weight: 600;
     }
     .dashboard-strip-value {
-        font-size: 1.4rem;
+        margin-top: 12px;
+        font-size: 1.45rem;
         line-height: 1;
         font-weight: 900;
         letter-spacing: -0.05em;
@@ -2902,13 +2883,11 @@ st.markdown(
         font-variant-numeric: tabular-nums;
     }
     .allocation-ratio-card {
-        border: 1px solid rgba(148, 163, 184, 0.18);
-        border-radius: 24px;
-        padding: 16px 16px 10px;
-        background:
-            radial-gradient(circle at top right, rgba(34, 211, 238, 0.08), transparent 35%),
-            linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.92));
-        box-shadow: 0 20px 40px rgba(2, 6, 23, 0.24);
+        border: 0;
+        border-radius: 0;
+        padding: 4px 2px 0;
+        background: transparent;
+        box-shadow: none;
         min-height: 520px;
     }
     .allocation-ratio-header,
@@ -3289,176 +3268,53 @@ else:
 
     with tab1:
         st.subheader("核心資產概覽")
-        hero_col, strip_col = st.columns([1.45, 1])
-        with hero_col:
-            render_dashboard_hero_panel(
-                exact_nav,
-                day_delta,
-                day_delta_pct,
-                total_delta,
-                total_delta_pct,
-                total_holdings_mv,
-            )
-        with strip_col:
-            render_dashboard_metric_strip(
-                [
-                    {
-                        "label": "累積報酬（基準 0050）",
-                        "value": f"{benchmark_total_pct:+.2f}%",
-                        "value_color": tw_profit_color(benchmark_total_pct),
-                        "sub_text": "Benchmark 累積績效",
-                        "accent_color": "#22d3ee",
-                    },
-                    {
-                        "label": "累積 Alpha（你 - 基準）",
-                        "value": f"{latest_cum_alpha:+.2f}%",
-                        "value_color": tw_profit_color(latest_cum_alpha),
-                        "sub_text": "策略相對 0050 超額報酬",
-                        "accent_color": "#f59e0b",
-                    },
-                    {
-                        "label": "最大回撤",
-                        "value": f"{max_drawdown:.2f}%",
-                        "value_color": "#22c55e" if max_drawdown < 0 else "#f8fafc",
-                        "sub_text": f"目前回撤 {latest_drawdown:.2f}%",
-                        "accent_color": "#22c55e",
-                    },
-                    {
-                        "label": "波動率（年化）",
-                        "value": f"{annualized_volatility:.2f}%",
-                        "value_color": "#f8fafc",
-                        "sub_text": "由每日報酬率年化估算",
-                        "accent_color": "#a78bfa",
-                    },
-                    {
-                        "label": "跑贏天數比例",
-                        "value": f"{outperform_days_ratio:.1f}%",
-                        "value_color": "#38bdf8",
-                        "sub_text": "每日 Alpha > 0 的交易日占比",
-                        "accent_color": "#38bdf8",
-                    },
-                ]
-            )
-
-        with st.expander("⏳ 交割與現金明細", expanded=False):
-            s1, s2, s3 = st.columns(3)
-            with s1:
-                render_big_value_card(
-                    "可用預算 T+0",
-                    f"${t0_v:,.0f}",
-                    "#f8fafc",
-                    "可立即使用資金",
-                    card_class="holdings-stat-card",
-                )
-            with s2:
-                render_big_value_card(
-                    "銀行結餘 T+2",
-                    f"${t2_v:,.0f}",
-                    "#f8fafc",
-                    "含待交割後餘額",
-                    card_class="holdings-stat-card",
-                )
-            with s3:
-                render_big_value_card(
-                    "待交割淨額",
-                    f"${pending_val:,.0f}",
-                    tw_profit_color(pending_val),
-                    "正數應收 / 負數應付",
-                    card_class="holdings-stat-card",
-                )
-
-            if next_settlement is not None:
-                next_net = float(next_settlement["淨交割額"])
-                next_desc = (
-                    f"應收 ${abs(next_net):,.0f}"
-                    if next_net > 0
-                    else (f"應付 ${abs(next_net):,.0f}" if next_net < 0 else "持平 $0")
-                )
-                st.caption(
-                    f"下一個交割日：{next_settlement['預計交割日']}｜當日淨交割：{next_desc}"
-                )
-            else:
-                st.caption("目前沒有待交割交易。")
-
-            with st.popover("🗓️ 休市日曆", use_container_width=False):
-                st.caption("TWSE 年度休市會自動同步；此處也可手動補特殊停市日。")
-                if st.button(
-                    "🔄 從 TWSE 同步年度休市",
-                    key=f"holiday_sync_twse_{current_pid}",
-                    use_container_width=True,
-                ):
-                    synced_count = sync_twse_market_holidays()
-                    st.success(f"已同步 {synced_count} 筆 TWSE 休市資料")
-                    time.sleep(0.3)
-                    st.rerun()
-
-                hol_df = get_market_holidays_df()
-                add_h_col1, add_h_col2 = st.columns([1.2, 1.8])
-                h_date = add_h_col1.date_input(
-                    "日期",
-                    value=datetime.now(),
-                    key=f"holiday_add_date_{current_pid}",
-                )
-                h_reason = add_h_col2.text_input(
-                    "原因",
-                    value="",
-                    key=f"holiday_add_reason_{current_pid}",
-                    placeholder="例：補假、颱風停市",
-                )
-                h_settlement_open = st.checkbox(
-                    "這天休市但仍可辦理交割",
-                    value=False,
-                    key=f"holiday_settlement_open_{current_pid}",
-                )
-                if st.button("新增休市日", key=f"holiday_add_btn_{current_pid}"):
-                    upsert_market_holiday(
-                        h_date.strftime("%Y-%m-%d"),
-                        h_reason.strip(),
-                        h_settlement_open,
-                    )
-                    st.rerun()
-
-                if not hol_df.empty:
-                    del_target = st.selectbox(
-                        "刪除日期",
-                        options=hol_df["date"].tolist(),
-                        index=len(hol_df) - 1,
-                        key=f"holiday_del_target_{current_pid}",
-                    )
-                    if st.button("刪除", key=f"holiday_del_btn_{current_pid}"):
-                        delete_market_holiday(del_target)
-                        st.rerun()
-                    st.dataframe(
-                        hol_df.tail(5),
-                        use_container_width=True,
-                        hide_index=True,
-                        height=170,
-                    )
-
-            if not pending_summary.empty:
-                st.dataframe(
-                    pending_summary[
-                        ["預計交割日", "交割方向", "淨交割額", "筆數"]
-                    ].style.format({"淨交割額": "${:,.0f}"}),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-                if st.toggle("顯示交割交易明細", value=False):
-                    st.dataframe(
-                        pending_trades[
-                            [
-                                "交易日",
-                                "預計交割日",
-                                "標的",
-                                "動作",
-                                "交割方向",
-                                "交割金額",
-                            ]
-                        ].style.format({"交割金額": "${:,.0f}"}),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+        render_dashboard_hero_panel(
+            exact_nav,
+            day_delta,
+            day_delta_pct,
+            total_delta,
+            total_delta_pct,
+            total_holdings_mv,
+        )
+        render_dashboard_metric_strip(
+            [
+                {
+                    "label": "累積報酬（基準 0050）",
+                    "value": f"{benchmark_total_pct:+.2f}%",
+                    "value_color": tw_profit_color(benchmark_total_pct),
+                    "sub_text": "Benchmark 累積績效",
+                    "accent_color": "#22d3ee",
+                },
+                {
+                    "label": "累積 Alpha（你 - 基準）",
+                    "value": f"{latest_cum_alpha:+.2f}%",
+                    "value_color": tw_profit_color(latest_cum_alpha),
+                    "sub_text": "策略相對 0050 超額報酬",
+                    "accent_color": "#f59e0b",
+                },
+                {
+                    "label": "最大回撤",
+                    "value": f"{max_drawdown:.2f}%",
+                    "value_color": "#22c55e" if max_drawdown < 0 else "#f8fafc",
+                    "sub_text": f"目前回撤 {latest_drawdown:.2f}%",
+                    "accent_color": "#22c55e",
+                },
+                {
+                    "label": "波動率（年化）",
+                    "value": f"{annualized_volatility:.2f}%",
+                    "value_color": "#f8fafc",
+                    "sub_text": "由每日報酬率年化估算",
+                    "accent_color": "#a78bfa",
+                },
+                {
+                    "label": "跑贏天數比例",
+                    "value": f"{outperform_days_ratio:.1f}%",
+                    "value_color": "#38bdf8",
+                    "sub_text": "每日 Alpha > 0 的交易日占比",
+                    "accent_color": "#38bdf8",
+                },
+            ]
+        )
 
         st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
         st.subheader("📈 總資產走勢（績效 %）")
@@ -3607,6 +3463,127 @@ else:
 
         with alloc_table_col:
             render_allocation_ratio_table(allocation_df, allocation_color_map)
+
+        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+        with st.expander("⏳ 交割與現金明細", expanded=False):
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                render_big_value_card(
+                    "可用預算 T+0",
+                    f"${t0_v:,.0f}",
+                    "#f8fafc",
+                    "可立即使用資金",
+                    card_class="holdings-stat-card",
+                )
+            with s2:
+                render_big_value_card(
+                    "銀行結餘 T+2",
+                    f"${t2_v:,.0f}",
+                    "#f8fafc",
+                    "含待交割後餘額",
+                    card_class="holdings-stat-card",
+                )
+            with s3:
+                render_big_value_card(
+                    "待交割淨額",
+                    f"${pending_val:,.0f}",
+                    tw_profit_color(pending_val),
+                    "正數應收 / 負數應付",
+                    card_class="holdings-stat-card",
+                )
+
+            if next_settlement is not None:
+                next_net = float(next_settlement["淨交割額"])
+                next_desc = (
+                    f"應收 ${abs(next_net):,.0f}"
+                    if next_net > 0
+                    else (f"應付 ${abs(next_net):,.0f}" if next_net < 0 else "持平 $0")
+                )
+                st.caption(
+                    f"下一個交割日：{next_settlement['預計交割日']}｜當日淨交割：{next_desc}"
+                )
+            else:
+                st.caption("目前沒有待交割交易。")
+
+            with st.popover("🗓️ 休市日曆", use_container_width=False):
+                st.caption("TWSE 年度休市會自動同步；此處也可手動補特殊停市日。")
+                if st.button(
+                    "🔄 從 TWSE 同步年度休市",
+                    key=f"holiday_sync_twse_{current_pid}",
+                    use_container_width=True,
+                ):
+                    synced_count = sync_twse_market_holidays()
+                    st.success(f"已同步 {synced_count} 筆 TWSE 休市資料")
+                    time.sleep(0.3)
+                    st.rerun()
+
+                hol_df = get_market_holidays_df()
+                add_h_col1, add_h_col2 = st.columns([1.2, 1.8])
+                h_date = add_h_col1.date_input(
+                    "日期",
+                    value=datetime.now(),
+                    key=f"holiday_add_date_{current_pid}",
+                )
+                h_reason = add_h_col2.text_input(
+                    "原因",
+                    value="",
+                    key=f"holiday_add_reason_{current_pid}",
+                    placeholder="例：補假、颱風停市",
+                )
+                h_settlement_open = st.checkbox(
+                    "這天休市但仍可辦理交割",
+                    value=False,
+                    key=f"holiday_settlement_open_{current_pid}",
+                )
+                if st.button("新增休市日", key=f"holiday_add_btn_{current_pid}"):
+                    upsert_market_holiday(
+                        h_date.strftime("%Y-%m-%d"),
+                        h_reason.strip(),
+                        h_settlement_open,
+                    )
+                    st.rerun()
+
+                if not hol_df.empty:
+                    del_target = st.selectbox(
+                        "刪除日期",
+                        options=hol_df["date"].tolist(),
+                        index=len(hol_df) - 1,
+                        key=f"holiday_del_target_{current_pid}",
+                    )
+                    if st.button("刪除", key=f"holiday_del_btn_{current_pid}"):
+                        delete_market_holiday(del_target)
+                        st.rerun()
+                    st.dataframe(
+                        hol_df.tail(5),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=170,
+                    )
+
+            if not pending_summary.empty:
+                st.dataframe(
+                    pending_summary[
+                        ["預計交割日", "交割方向", "淨交割額", "筆數"]
+                    ].style.format({"淨交割額": "${:,.0f}"}),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                if st.toggle("顯示交割交易明細", value=False):
+                    st.dataframe(
+                        pending_trades[
+                            [
+                                "交易日",
+                                "預計交割日",
+                                "標的",
+                                "動作",
+                                "交割方向",
+                                "交割金額",
+                            ]
+                        ].style.format({"交割金額": "${:,.0f}"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
     with tab3:
         st.header("持倉分析中心")
