@@ -128,6 +128,18 @@ def init_db():
     );
     ''')
 
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS NotebookArticles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_date TEXT NOT NULL,
+        update_log_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL
+    );
+    ''')
+
     # 寫入預設的測試資金池資料
     cursor.execute("INSERT INTO Portfolios (name, t0_cash, t2_cash, initial_cash) VALUES ('自己', 1000000.0, 1000000.0, 1000000.0)")
     cursor.execute("INSERT INTO Portfolios (name, t0_cash, t2_cash, initial_cash) VALUES ('爸爸', 500000.0, 500000.0, 500000.0)")

@@ -588,6 +588,80 @@ class MacroJournalRepository:
             .execute()
         )
 
+    def delete_journal(self, date):
+        _run_with_retry(
+            lambda: get_supabase_client()
+            .table("MacroJournals")
+            .delete()
+            .eq("date", date)
+            .execute()
+        )
+
+
+class NotebookArticleRepository:
+    def list_articles(self, note_type):
+        return _to_dataframe(
+            _fetch_all_rows(
+                "NotebookArticles",
+                "id,note_type,title,content,created_date,update_log_json,updated_at",
+                lambda q: q.eq("note_type", note_type)
+                .order("updated_at", desc=True)
+                .order("id", desc=True),
+            ),
+            [
+                "id",
+                "note_type",
+                "title",
+                "content",
+                "created_date",
+                "update_log_json",
+                "updated_at",
+            ],
+        )
+
+    def create_article(self, note_type, title, content, created_date, update_log_json):
+        response = _run_with_retry(
+            lambda: get_supabase_client()
+            .table("NotebookArticles")
+            .insert(
+                {
+                    "note_type": note_type,
+                    "title": title,
+                    "content": content,
+                    "created_date": created_date,
+                    "update_log_json": update_log_json,
+                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+            .execute()
+        )
+        return int((response.data or [{}])[0].get("id") or 0)
+
+    def update_article(self, article_id, title, content, update_log_json):
+        _run_with_retry(
+            lambda: get_supabase_client()
+            .table("NotebookArticles")
+            .update(
+                {
+                    "title": title,
+                    "content": content,
+                    "update_log_json": update_log_json,
+                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+            .eq("id", int(article_id))
+            .execute()
+        )
+
+    def delete_article(self, article_id):
+        _run_with_retry(
+            lambda: get_supabase_client()
+            .table("NotebookArticles")
+            .delete()
+            .eq("id", int(article_id))
+            .execute()
+        )
+
 
 class TradeCycleReviewRepository:
     def get_review(self, portfolio_id, stock_id, cycle_no):
@@ -649,4 +723,5 @@ manual_price_override_repository = ManualPriceOverrideRepository()
 price_snapshot_repository = PriceSnapshotRepository()
 daily_nav_snapshot_repository = DailyNavSnapshotRepository()
 macro_journal_repository = MacroJournalRepository()
+notebook_article_repository = NotebookArticleRepository()
 trade_cycle_review_repository = TradeCycleReviewRepository()

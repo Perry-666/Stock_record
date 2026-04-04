@@ -2421,6 +2421,208 @@ else:
         render_trade_entry_panel(current_pid)
 
 
+def format_notebook_update_log(update_log_json, created_date=""):
+    try:
+        update_dates = json.loads(update_log_json or "[]")
+    except Exception:
+        update_dates = []
+    if not isinstance(update_dates, list):
+        update_dates = []
+
+    unique_dates = []
+    for date_item in [created_date] + update_dates:
+        date_text = str(date_item or "").strip()
+        if date_text and date_text not in unique_dates:
+            unique_dates.append(date_text)
+    return "、".join(unique_dates) if unique_dates else "-"
+
+
+def render_notion_editor(content_key, initial_value="", height=520):
+    if content_key not in st.session_state:
+        st.session_state[content_key] = str(initial_value or "")
+
+    edit_tab, preview_tab = st.tabs(["✍️ 編輯", "👀 預覽"])
+    with edit_tab:
+        edited_text = st.text_area(
+            "筆記內容",
+            key=content_key,
+            height=height,
+            label_visibility="collapsed",
+        )
+    with preview_tab:
+        preview_text = str(st.session_state.get(content_key, "") or "").strip()
+        if preview_text:
+            st.markdown(preview_text)
+        else:
+            st.caption("目前沒有內容可預覽。")
+    return edited_text
+
+
+def render_daily_macro_journal_tab():
+    with st.expander("✍️ 撰寫今日筆記", expanded=True):
+        with st.form("macro_journal_form"):
+            j_date = st.date_input("寫作日期", datetime.now(), key="macro_new_date")
+            q1 = st.text_area(
+                "1. 大盤與整體動態",
+                height=140,
+                placeholder="描述今日大盤氣氛、資金流向與總經數據影響...",
+                key="macro_new_q1",
+            )
+            q2 = st.text_area(
+                "2. 交易檢討與改進",
+                height=140,
+                placeholder="分享今日心魔、做對與做錯的操作、後續策略調整...",
+                key="macro_new_q2",
+            )
+            q3 = st.text_area(
+                "3. 最近觀察標的與原因",
+                height=140,
+                placeholder="列出值得留意的個股、型態、籌碼或是突破價位...",
+                key="macro_new_q3",
+            )
+
+            if st.form_submit_button("儲存入記事本"):
+                combined_content = (
+                    f"### 🌍 大盤與整體動態\n{q1}\n\n"
+                    f"### 💡 交易檢討與改進\n{q2}\n\n"
+                    f"### 🔭 最近觀察標的與原因\n{q3}"
+                )
+                save_macro_journal(j_date.strftime("%Y-%m-%d"), combined_content)
+                st.success("儲存成功！筆記已發布！")
+                time.sleep(0.5)
+                st.rerun()
+
+    st.markdown("---")
+    st.subheader("📖 歷史筆記流")
+
+    md_df = get_macro_journals()
+    if md_df.empty:
+        st.info("目前筆記本還是空白的。")
+        return
+
+    for _, row in md_df.iterrows():
+        note_date = str(row["date"])
+        with st.expander(f"📅 {note_date}", expanded=False):
+            edit_key = f"macro_note_edit_{note_date}"
+            current_text = render_notion_editor(
+                edit_key,
+                row.get("content", ""),
+                height=440,
+            )
+            action_cols = st.columns([1, 1, 4])
+            if action_cols[0].button("儲存修改", key=f"save_macro_{note_date}"):
+                save_macro_journal(note_date, current_text)
+                st.success(f"{note_date} 筆記已更新")
+                time.sleep(0.3)
+                st.rerun()
+            if action_cols[1].button("刪除筆記", key=f"delete_macro_{note_date}"):
+                delete_macro_journal(note_date)
+                st.session_state.pop(edit_key, None)
+                st.success(f"{note_date} 筆記已刪除")
+                time.sleep(0.3)
+                st.rerun()
+
+
+def render_article_notebook_tab(note_type, section_title, new_button_label, key_prefix):
+    st.subheader(section_title)
+
+    articles_df = get_notebook_articles(note_type).copy()
+    if st.button(new_button_label, key=f"{key_prefix}_create_btn"):
+        new_article_id = create_notebook_article(
+            note_type,
+            "未命名筆記",
+            "先在這裡開始寫內容。",
+            datetime.now().strftime("%Y-%m-%d"),
+        )
+        if new_article_id:
+            st.session_state[f"{key_prefix}_selected_article_id"] = int(new_article_id)
+        st.success("已建立新筆記")
+        time.sleep(0.3)
+        st.rerun()
+
+    if articles_df.empty:
+        st.info("目前還沒有筆記，先按上方按鈕新增一篇。")
+        return
+
+    articles_df["id"] = pd.to_numeric(articles_df["id"], errors="coerce").fillna(0).astype(int)
+    article_options = [article_id for article_id in articles_df["id"].tolist() if article_id > 0]
+    selected_state_key = f"{key_prefix}_selected_article_id"
+    if not article_options:
+        st.info("目前還沒有可讀取的筆記。")
+        return
+    if st.session_state.get(selected_state_key) not in article_options:
+        st.session_state[selected_state_key] = article_options[0]
+
+    selected_article_id = st.selectbox(
+        "選擇筆記事項",
+        options=article_options,
+        format_func=lambda article_id: str(
+            articles_df.loc[articles_df["id"] == article_id, "title"].iloc[0]
+        ),
+        key=selected_state_key,
+    )
+    selected_row = articles_df[articles_df["id"] == selected_article_id].iloc[0]
+
+    meta_left, meta_right = st.columns([1.35, 1])
+    with meta_left:
+        title_value = st.text_input(
+            "筆記標題",
+            value=str(selected_row.get("title", "") or ""),
+            key=f"{key_prefix}_title_{selected_article_id}",
+            label_visibility="collapsed",
+        )
+    with meta_right:
+        raw_edit_date = pd.to_datetime(
+            selected_row.get("updated_at") or selected_row.get("created_date") or datetime.now(),
+            errors="coerce",
+        )
+        edit_date = st.date_input(
+            "本次編輯日期",
+            value=raw_edit_date.date() if pd.notna(raw_edit_date) else datetime.now().date(),
+            key=f"{key_prefix}_edit_date_{selected_article_id}",
+        )
+
+    content_key = f"{key_prefix}_content_{selected_article_id}"
+    article_content = render_notion_editor(
+        content_key,
+        selected_row.get("content", ""),
+        height=560,
+    )
+
+    update_log_text = format_notebook_update_log(
+        selected_row.get("update_log_json", "[]"),
+        selected_row.get("created_date", ""),
+    )
+    st.caption(
+        f"建立日期：{selected_row.get('created_date', '-')}"
+        f"｜更新日期紀錄：{update_log_text}"
+    )
+
+    save_col, delete_col, _ = st.columns([1, 1, 4])
+    if save_col.button("儲存修改", key=f"{key_prefix}_save_{selected_article_id}"):
+        try:
+            update_notebook_article(
+                selected_article_id,
+                title_value,
+                article_content,
+                edit_date.strftime("%Y-%m-%d"),
+                selected_row.get("update_log_json", "[]"),
+            )
+            st.success("筆記已更新")
+            time.sleep(0.3)
+            st.rerun()
+        except ValueError as note_error:
+            st.error(str(note_error))
+
+    if delete_col.button("刪除此筆記", key=f"{key_prefix}_delete_{selected_article_id}"):
+        delete_notebook_article(selected_article_id)
+        st.session_state.pop(content_key, None)
+        st.session_state.pop(f"{key_prefix}_title_{selected_article_id}", None)
+        st.success("筆記已刪除")
+        time.sleep(0.3)
+        st.rerun()
+
+
 from backend import (
     ai_vision_portfolio,
     ai_vision_single_trade,
@@ -2429,7 +2631,10 @@ from backend import (
     build_pending_settlement_schedule,
     calculate_trade_journal,
     calculate_twr_and_nav,
+    create_notebook_article,
     create_portfolio,
+    delete_macro_journal,
+    delete_notebook_article,
     delete_portfolio_and_related_data,
     ensure_db_schema,
     execute_cashflow,
@@ -2438,6 +2643,7 @@ from backend import (
     get_holdings_detail,
     get_latest_tw_trading_date,
     get_macro_journals,
+    get_notebook_articles,
     get_db_connection,
     get_portfolio_state,
     get_portfolios,
@@ -2456,6 +2662,7 @@ from backend import (
     summarize_closed_stock_trade_cycles,
     update_trade_record,
     update_holding_risk_targets,
+    update_notebook_article,
     upsert_market_holiday,
     delete_market_holiday,
     save_trade_cycle_ai_review,
@@ -2943,6 +3150,20 @@ st.markdown(
         text-align: right;
         font-variant-numeric: tabular-nums;
     }
+    div[data-testid="stTextArea"] textarea {
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        color: #f8fafc !important;
+        font-size: 1rem !important;
+        line-height: 1.8 !important;
+    }
+    div[data-testid="stTextInput"] input {
+        background: transparent !important;
+        border: 0 !important;
+        color: #f8fafc !important;
+        font-size: 1rem !important;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -3005,47 +3226,27 @@ st.sidebar.markdown("---")
 
 if app_mode == "🌐 全域操盤筆記本":
     st.header("全域操盤筆記本 (跨帳戶共用)")
-    st.markdown(
-        "這是一本屬於您的全局日記，像部落格一樣由新到舊排序，獨立於資金池之外。"
+    st.caption("第一區保留每日操盤日誌；第二區整理可反覆修訂的交易策略；第三區沉澱交易知識。")
+
+    daily_tab, strategy_tab, knowledge_tab = st.tabs(
+        ["📅 每日操盤筆記", "🧭 交易策略專區", "📚 交易知識庫"]
     )
-
-    with st.expander("✍️ 撰寫今日筆記", expanded=True):
-        with st.form("macro_journal_form"):
-            j_date = st.date_input("寫作日期", datetime.now())
-            q1 = st.text_area(
-                "1. 大盤與整體動態",
-                height=120,
-                placeholder="描述今日大盤氣氛、資金流向與總經數據影響...",
-            )
-            q2 = st.text_area(
-                "2. 交易檢討與改進",
-                height=120,
-                placeholder="分享今日心魔、做對與做錯的操作、後續策略調整...",
-            )
-            q3 = st.text_area(
-                "3. 最近觀察標的與原因",
-                height=120,
-                placeholder="列出值得留意的個股、型態、籌碼或是突破價位...",
-            )
-
-            if st.form_submit_button("儲存入記事本"):
-                combined_content = f"### 🌍 大盤與整體動態\n{q1}\n\n### 💡 交易檢討與改進\n{q2}\n\n### 🔭 最近觀察標的與原因\n{q3}"
-                save_macro_journal(j_date.strftime("%Y-%m-%d"), combined_content)
-                st.success("儲存成功！筆記已發布！")
-                time.sleep(1)
-                st.rerun()
-
-    st.markdown("---")
-    st.subheader("📖 歷史筆記流")
-
-    md_df = get_macro_journals()
-    if md_df.empty:
-        st.info("目前筆記本還是空白的。")
-    else:
-        for idx, row in md_df.iterrows():
-            with st.container(border=True):
-                st.markdown(f"## 📅 {row['date']}")
-                st.markdown(row["content"])
+    with daily_tab:
+        render_daily_macro_journal_tab()
+    with strategy_tab:
+        render_article_notebook_tab(
+            "strategy",
+            "🧭 交易策略專區",
+            "新增交易策略筆記",
+            "strategy_note",
+        )
+    with knowledge_tab:
+        render_article_notebook_tab(
+            "knowledge",
+            "📚 交易知識庫",
+            "新增交易知識筆記",
+            "knowledge_note",
+        )
 
 else:
     # --- Sidebar Setup & Portfolios ---

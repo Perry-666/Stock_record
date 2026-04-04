@@ -18,6 +18,7 @@ from repositories import (
     macro_journal_repository,
     manual_price_override_repository,
     market_holiday_repository,
+    notebook_article_repository,
     portfolio_repository,
     price_snapshot_repository,
     stock_name_repository,
@@ -175,6 +176,19 @@ def ensure_db_schema():
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (portfolio_id, stock_id, cycle_no),
                 FOREIGN KEY (portfolio_id) REFERENCES Portfolios(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS NotebookArticles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                note_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_date TEXT NOT NULL,
+                update_log_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL
             )
             """
         )
@@ -1101,6 +1115,79 @@ def get_macro_journals():
 
 def save_macro_journal(date, content):
     macro_journal_repository.upsert_journal(date, content)
+
+
+def delete_macro_journal(date):
+    macro_journal_repository.delete_journal(date)
+
+
+def _normalize_notebook_update_log(update_log_json, edit_date=None):
+    try:
+        update_dates = json.loads(update_log_json or "[]")
+    except Exception:
+        update_dates = []
+
+    if not isinstance(update_dates, list):
+        update_dates = []
+
+    normalized_dates = []
+    for date_item in update_dates:
+        date_text = str(date_item or "").strip()
+        if date_text and date_text not in normalized_dates:
+            normalized_dates.append(date_text)
+
+    if edit_date:
+        edit_date_text = str(edit_date).strip()
+        if edit_date_text and edit_date_text not in normalized_dates:
+            normalized_dates.append(edit_date_text)
+
+    return json.dumps(normalized_dates, ensure_ascii=False)
+
+
+def get_notebook_articles(note_type):
+    return notebook_article_repository.list_articles(note_type)
+
+
+def create_notebook_article(note_type, title, content, created_date):
+    normalized_title = str(title or "").strip()
+    normalized_content = str(content or "").strip()
+    normalized_date = str(created_date or "").strip()
+    if not normalized_title:
+        raise ValueError("筆記標題不能空白。")
+    if not normalized_content:
+        raise ValueError("筆記內容不能空白。")
+    if not normalized_date:
+        raise ValueError("請選擇寫作日期。")
+
+    update_log_json = _normalize_notebook_update_log("[]", normalized_date)
+    return notebook_article_repository.create_article(
+        str(note_type or "").strip(),
+        normalized_title,
+        normalized_content,
+        normalized_date,
+        update_log_json,
+    )
+
+
+def update_notebook_article(article_id, title, content, edit_date, update_log_json):
+    normalized_title = str(title or "").strip()
+    normalized_content = str(content or "").strip()
+    if not normalized_title:
+        raise ValueError("筆記標題不能空白。")
+    if not normalized_content:
+        raise ValueError("筆記內容不能空白。")
+
+    normalized_update_log = _normalize_notebook_update_log(update_log_json, edit_date)
+    notebook_article_repository.update_article(
+        int(article_id),
+        normalized_title,
+        normalized_content,
+        normalized_update_log,
+    )
+
+
+def delete_notebook_article(article_id):
+    notebook_article_repository.delete_article(int(article_id))
 
 
 def get_manual_price_overrides(stock_ids=None):
