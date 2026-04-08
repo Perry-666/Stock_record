@@ -1610,6 +1610,81 @@ def get_daily_nav_snapshots_df(portfolio_id):
     return df
 
 
+def _compute_holdings_market_value_on_date(trades_df, price_data, target_date):
+    if trades_df is None or trades_df.empty or price_data is None or price_data.empty:
+        return 0.0
+
+    target_dt = pd.to_datetime(target_date, errors="coerce")
+    if pd.isna(target_dt):
+        return 0.0
+    target_str = target_dt.strftime("%Y-%m-%d")
+
+    working_df = trades_df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"], errors="coerce")
+    working_df = working_df.dropna(subset=["date"])
+    working_df = working_df[working_df["date"] <= target_dt].copy()
+    if working_df.empty:
+        return 0.0
+
+    working_df["stock_id"] = working_df["stock_id"].apply(normalize_stock_id)
+    working_df["shares"] = pd.to_numeric(working_df["shares"], errors="coerce").fillna(0).astype(int)
+    inventory = {}
+    for _, row in working_df.iterrows():
+        sid = row["stock_id"]
+        action = str(row.get("action", "") or "")
+        inventory.setdefault(sid, 0)
+        if action in ["Buy", "Add", "Setup"]:
+            inventory[sid] += int(row["shares"])
+        elif action in ["Reduce", "Close"]:
+            inventory[sid] -= int(row["shares"])
+
+    holdings_value = 0.0
+    for sid, shares in inventory.items():
+        if shares <= 0:
+            continue
+        close_price = _resolve_stock_price_on_date(
+            price_data,
+            sid,
+            target_str,
+            fallback_price=0.0,
+        )
+        holdings_value += float(close_price or 0) * float(shares)
+    return float(holdings_value)
+
+
+def _latest_nav_snapshot_out_of_sync(existing_nav_df, trades_df, latest_trading_date, price_data):
+    if existing_nav_df is None or existing_nav_df.empty:
+        return False
+
+    latest_snapshot_df = existing_nav_df[
+        existing_nav_df["Date"].astype(str) == str(latest_trading_date)
+    ].copy()
+    if latest_snapshot_df.empty:
+        return False
+
+    latest_row = latest_snapshot_df.iloc[-1]
+    latest_benchmark_price = _resolve_stock_price_on_date(
+        price_data,
+        "0050",
+        latest_trading_date,
+        fallback_price=0.0,
+    )
+    snapshot_benchmark_price = float(latest_row.get("BenchmarkPrice", 0) or 0)
+    if latest_benchmark_price > 0 and abs(snapshot_benchmark_price - latest_benchmark_price) > 1e-6:
+        return True
+
+    latest_holdings_value = _compute_holdings_market_value_on_date(
+        trades_df,
+        price_data,
+        latest_trading_date,
+    )
+    snapshot_holdings_value = float(latest_row.get("Holdings", 0) or 0)
+    if abs(snapshot_holdings_value - latest_holdings_value) > 1e-6:
+        return True
+
+    return False
+
+
 def upsert_daily_nav_snapshots(portfolio_id, hist_df):
     if hist_df is None or hist_df.empty:
         return 0
@@ -1816,17 +1891,6 @@ def calculate_twr_and_nav(portfolio_id):
         mark_nav_snapshots_dirty(portfolio_id, stale_snapshot_date)
         dirty_from_date = portfolio_repository.get_nav_dirty_from_date(portfolio_id)
         existing_nav_df = get_daily_nav_snapshots_df(portfolio_id)
-    if (
-        dirty_from_date is None
-        and not existing_nav_df.empty
-        and str(existing_nav_df.iloc[-1]["Date"]) >= latest_trading_date
-    ):
-        return (
-            existing_nav_df,
-            existing_nav_df.iloc[-1]["NAV"],
-            existing_nav_df.iloc[-1]["TWR"],
-        )
-
     snapshot_tickers = list(dict.fromkeys(all_tickers + ["0050"]))
     price_refresh_start = dirty_from_date or start_date_str
     min_price_snapshot_date = get_price_snapshot_min_latest_date(snapshot_tickers)
@@ -1857,6 +1921,27 @@ def calculate_twr_and_nav(portfolio_id):
         price_data["0050"] = price_data["0050.TW"]
     symbol_map.setdefault("0050", "0050.TW")
     latest_trading_ts = pd.to_datetime(latest_trading_date)
+
+    if (
+        dirty_from_date is None
+        and not existing_nav_df.empty
+        and str(existing_nav_df.iloc[-1]["Date"]) >= latest_trading_date
+    ):
+        if _latest_nav_snapshot_out_of_sync(
+            existing_nav_df,
+            trades_df,
+            latest_trading_date,
+            price_data,
+        ):
+            mark_nav_snapshots_dirty(portfolio_id, latest_trading_date)
+            dirty_from_date = portfolio_repository.get_nav_dirty_from_date(portfolio_id)
+            existing_nav_df = get_daily_nav_snapshots_df(portfolio_id)
+        else:
+            return (
+                existing_nav_df,
+                existing_nav_df.iloc[-1]["NAV"],
+                existing_nav_df.iloc[-1]["TWR"],
+            )
 
     if all_tickers:
         manual_overrides = get_manual_price_overrides(all_tickers)
