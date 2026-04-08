@@ -6,6 +6,28 @@ import pytest
 import backend
 
 
+def test_latest_official_trading_date_before_and_after_close(monkeypatch):
+    monkeypatch.setattr(
+        backend,
+        "get_market_holiday_dates",
+        lambda: {"2026-04-03", "2026-04-06"},
+    )
+
+    monkeypatch.setattr(
+        backend,
+        "get_tw_now",
+        lambda: pd.Timestamp("2026-04-08 11:00:00").to_pydatetime(),
+    )
+    assert backend.get_latest_official_tw_trading_date() == "2026-04-07"
+
+    monkeypatch.setattr(
+        backend,
+        "get_tw_now",
+        lambda: pd.Timestamp("2026-04-08 14:10:00").to_pydatetime(),
+    )
+    assert backend.get_latest_official_tw_trading_date() == "2026-04-08"
+
+
 def test_trade_edit_delete_rebuilds_nav_and_blocks_invalid_actions(temp_portfolio):
     backend.execute_cashflow(temp_portfolio, "2026-03-27", "Deposit", 20000)
     backend.execute_trade(

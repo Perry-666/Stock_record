@@ -36,6 +36,9 @@ _session.headers.update(
     {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 )
 TRADE_RISK_META_PREFIX = "[[TRADE_RISK]]"
+TW_MARKET_CLOSE_HOUR = 13
+TW_MARKET_CLOSE_MINUTE = 30
+TW_MARKET_FINALIZATION_DELAY_MINUTES = 30
 
 
 def normalize_stock_id(s):
@@ -45,6 +48,10 @@ def normalize_stock_id(s):
     if s.endswith(".TWO"):
         s = s[:-4]
     return re.split(r"[\s\-]", s)[0].strip()
+
+
+def get_tw_now():
+    return datetime.now()
 
 def ensure_db_schema():
     conn = get_db_connection()
@@ -388,6 +395,23 @@ def get_latest_tw_trading_date(date_value=None, holiday_dates=None):
     while not is_tw_market_open(current, holiday_dates):
         current -= timedelta(days=1)
     return current.strftime("%Y-%m-%d")
+
+
+def get_latest_official_tw_trading_date(date_value=None, holiday_dates=None):
+    current = pd.to_datetime(date_value if date_value is not None else get_tw_now())
+    if holiday_dates is None:
+        holiday_dates = get_market_holiday_dates()
+
+    if not is_tw_market_open(current, holiday_dates):
+        return get_latest_tw_trading_date(current, holiday_dates)
+
+    official_cutoff = current.normalize() + pd.Timedelta(
+        hours=TW_MARKET_CLOSE_HOUR,
+        minutes=TW_MARKET_CLOSE_MINUTE + TW_MARKET_FINALIZATION_DELAY_MINUTES,
+    )
+    if current < official_cutoff:
+        current -= timedelta(days=1)
+    return get_latest_tw_trading_date(current, holiday_dates)
 
 
 def estimate_settlement_date(trade_date, business_days=2, holiday_dates=None):
@@ -1859,7 +1883,7 @@ def calculate_twr_and_nav(portfolio_id):
     if not dates:
         if abs(initial_cash) <= 1e-9:
             return pd.DataFrame(), 0, 0
-        dates.append(datetime.now().strftime("%Y-%m-%d"))
+        dates.append(get_tw_now().strftime("%Y-%m-%d"))
 
     start_date_str = min(dates)
     if abs(initial_cash) > 1e-9:
@@ -1879,10 +1903,11 @@ def calculate_twr_and_nav(portfolio_id):
             else pd.concat([initial_cf_row, cf_df], ignore_index=True)
         )
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-    end_date = datetime.now()
-    date_range = [d.strftime("%Y-%m-%d") for d in pd.date_range(start_date, end_date)]
     holiday_dates = get_market_holiday_dates()
-    latest_trading_date = get_latest_tw_trading_date(end_date, holiday_dates)
+    official_now = get_tw_now()
+    latest_trading_date = get_latest_official_tw_trading_date(official_now, holiday_dates)
+    end_date = datetime.strptime(latest_trading_date, "%Y-%m-%d")
+    date_range = [d.strftime("%Y-%m-%d") for d in pd.date_range(start_date, end_date)]
     all_tickers = trades_df["stock_id"].unique().tolist() if not trades_df.empty else []
 
     existing_nav_df = get_daily_nav_snapshots_df(portfolio_id)
