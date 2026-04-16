@@ -227,6 +227,134 @@ def test_price_snapshot_roundtrip_and_nav_snapshot_cache(temp_portfolio):
     assert not cached_df.empty
 
 
+def test_calculate_twr_and_nav_ignores_future_dated_events_without_crashing(
+    monkeypatch, temp_portfolio
+):
+    backend.execute_cashflow(temp_portfolio, "2026-03-27", "Deposit", 10000)
+    backend.execute_trade(
+        temp_portfolio,
+        "2026-03-30",
+        "2330",
+        "Buy",
+        780,
+        100,
+        False,
+        True,
+        True,
+        True,
+        True,
+        "base position",
+    )
+    backend.execute_trade(
+        temp_portfolio,
+        "2026-04-16",
+        "2330",
+        "Add",
+        790,
+        100,
+        False,
+        True,
+        True,
+        True,
+        True,
+        "future add",
+    )
+
+    monkeypatch.setattr(
+        backend,
+        "get_tw_now",
+        lambda: pd.Timestamp("2026-04-15 14:30:00").to_pydatetime(),
+    )
+
+    hist_df, current_nav, current_twr = backend.calculate_twr_and_nav(temp_portfolio)
+
+    assert not hist_df.empty
+    assert hist_df.iloc[-1]["Date"] == "2026-04-15"
+    assert float(hist_df.iloc[-1]["Holdings"]) == 181000.0
+    assert float(current_nav) == pytest.approx(float(hist_df.iloc[-1]["NAV"]))
+    assert float(current_twr) == pytest.approx(float(hist_df.iloc[-1]["TWR"]))
+
+
+def test_process_trade_derivation_uses_side_and_historical_inventory(temp_portfolio):
+    backend.execute_trade(
+        temp_portfolio,
+        "2026-03-30",
+        "2330",
+        "Buy",
+        780,
+        100,
+        False,
+        True,
+        True,
+        True,
+        True,
+        "first buy",
+    )
+    backend.execute_trade(
+        temp_portfolio,
+        "2026-03-31",
+        "2330",
+        "Add",
+        790,
+        100,
+        False,
+        True,
+        True,
+        True,
+        True,
+        "add position",
+    )
+
+    assert (
+        backend.process_trade_derivation(
+            temp_portfolio,
+            {
+                "trade_date": "2026-03-29",
+                "stock_id": "2330",
+                "side": "buy",
+                "shares": 100,
+            },
+        )
+        == "Buy"
+    )
+    assert (
+        backend.process_trade_derivation(
+            temp_portfolio,
+            {
+                "trade_date": "2026-04-01",
+                "stock_id": "2330",
+                "side": "buy",
+                "shares": 100,
+            },
+        )
+        == "Add"
+    )
+    assert (
+        backend.process_trade_derivation(
+            temp_portfolio,
+            {
+                "trade_date": "2026-04-01",
+                "stock_id": "2330",
+                "side": "sell",
+                "shares": 100,
+            },
+        )
+        == "Reduce"
+    )
+    assert (
+        backend.process_trade_derivation(
+            temp_portfolio,
+            {
+                "trade_date": "2026-04-01",
+                "stock_id": "2330",
+                "side": "sell",
+                "shares": 200,
+            },
+        )
+        == "Close"
+    )
+
+
 def test_holdings_detail_has_holding_days_efficiency_and_risk_targets(temp_portfolio):
     backend.execute_trade(
         temp_portfolio,

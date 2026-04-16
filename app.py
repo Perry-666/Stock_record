@@ -2047,7 +2047,14 @@ def render_trade_entry_panel(current_pid):
 
             parsed = trades[idx]
             stock_key = str(parsed.get("_parsed_uid") or f"ai_{idx}_{parsed.get('stock_id')}")
-            auto_action = process_trade_derivation(current_pid, parsed)
+            parsed_date = pd.to_datetime(
+                parsed.get("trade_date") or parsed.get("date"),
+                errors="coerce",
+            )
+            parsed_default_date = (
+                parsed_date.date() if not pd.isna(parsed_date) else default_trade_date
+            )
+            parsed_side = str(parsed.get("side") or "").strip().lower()
 
             with st.container(border=True):
                 st.markdown(f"### 📑 正在核對: {parsed.get('stock_id')}")
@@ -2057,7 +2064,7 @@ def render_trade_entry_panel(current_pid):
                 with c1:
                     t_date = st.date_input(
                         "交易日期",
-                        default_trade_date,
+                        parsed_default_date,
                         key=f"date_{stock_key}",
                     )
                     t_stock = st.text_input(
@@ -2065,13 +2072,9 @@ def render_trade_entry_panel(current_pid):
                         value=str(parsed.get("stock_id", "")),
                         key=f"stock_{stock_key}",
                     )
-                with c2:
-                    t_action = st.selectbox(
-                        "動作",
-                        ["Buy", "Add", "Reduce", "Close"],
-                        index=["Buy", "Add", "Reduce", "Close"].index(auto_action),
-                        key=f"action_{stock_key}",
-                    )
+                    if parsed_side:
+                        side_text = "買進" if parsed_side == "buy" else "賣出"
+                        st.caption(f"AI 判定方向：{side_text}")
 
                 c3, c4 = st.columns(2)
                 with c3:
@@ -2087,6 +2090,40 @@ def render_trade_entry_panel(current_pid):
                         step=100,
                         key=f"shares_{stock_key}",
                     )
+
+                derived_action = process_trade_derivation(
+                    current_pid,
+                    {
+                        "stock_id": t_stock,
+                        "trade_date": t_date.strftime("%Y-%m-%d"),
+                        "side": parsed_side,
+                        "shares": t_shares,
+                    },
+                )
+                action_key = f"action_{stock_key}"
+                action_sig_key = f"action_sig_{stock_key}"
+                action_signature = json.dumps(
+                    {
+                        "date": t_date.strftime("%Y-%m-%d"),
+                        "stock_id": str(t_stock or "").strip(),
+                        "side": parsed_side,
+                        "shares": int(t_shares or 0),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if st.session_state.get(action_sig_key) != action_signature:
+                    st.session_state[action_key] = derived_action
+                    st.session_state[action_sig_key] = action_signature
+
+                t_action = st.selectbox(
+                    "動作",
+                    ["Buy", "Add", "Reduce", "Close"],
+                    key=action_key,
+                )
+                st.caption(
+                    "系統會依 AI 判定的買/賣方向，結合該交易日期之前的持倉，自動推導 Buy / Add / Reduce / Close。"
+                )
 
                 is_disposed = st.checkbox("處置股", key=f"disp_{stock_key}")
                 t_take_profit_price, t_stop_loss_price = render_trade_risk_plan_inputs(

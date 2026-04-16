@@ -348,6 +348,70 @@ def get_inventory(portfolio_id, stock_id=None):
     )
 
 
+def get_inventory_as_of_date(portfolio_id, stock_id=None, as_of_date=None):
+    trades_df = trade_repository.list_trades(
+        portfolio_id, columns="date,stock_id,action,shares,id"
+    )
+    if trades_df.empty:
+        return pd.DataFrame(columns=["stock_id", "current_shares"])
+
+    trades_df = trades_df.copy()
+    trades_df["stock_id"] = trades_df["stock_id"].apply(normalize_stock_id)
+    trades_df["date"] = pd.to_datetime(trades_df["date"], errors="coerce")
+    trades_df["shares"] = pd.to_numeric(trades_df["shares"], errors="coerce").fillna(0)
+    trades_df = trades_df.dropna(subset=["date"])
+
+    if stock_id:
+        trades_df = trades_df[
+            trades_df["stock_id"] == normalize_stock_id(stock_id)
+        ].copy()
+    if trades_df.empty:
+        return pd.DataFrame(columns=["stock_id", "current_shares"])
+
+    if as_of_date is not None:
+        cutoff = pd.to_datetime(as_of_date, errors="coerce")
+        if not pd.isna(cutoff):
+            trades_df = trades_df[trades_df["date"] < cutoff.normalize()].copy()
+    if trades_df.empty:
+        return pd.DataFrame(columns=["stock_id", "current_shares"])
+
+    trade_signs = np.where(
+        trades_df["action"].isin(["Buy", "Add", "Setup"]),
+        trades_df["shares"],
+        np.where(
+            trades_df["action"].isin(["Reduce", "Close"]),
+            -trades_df["shares"],
+            0,
+        ),
+    )
+    trades_df["signed_shares"] = trade_signs
+    return (
+        trades_df.groupby("stock_id", as_index=False)["signed_shares"]
+        .sum()
+        .rename(columns={"signed_shares": "current_shares"})
+        .query("current_shares > 0")
+        .reset_index(drop=True)
+    )
+
+
+def _normalize_ai_trade_side(raw_value):
+    text = str(raw_value or "").strip().lower()
+    if not text:
+        return ""
+    if text in {"buy", "b", "bid", "long", "買", "買進", "買入"}:
+        return "buy"
+    if text in {"sell", "s", "ask", "short", "賣", "賣出", "賣掉"}:
+        return "sell"
+    return ""
+
+
+def _normalize_ai_trade_date(raw_value):
+    parsed = pd.to_datetime(raw_value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.strftime("%Y-%m-%d")
+
+
 def get_market_holiday_dates():
     holiday_df = market_holiday_repository.list_holidays()
     if holiday_df.empty:
@@ -1873,7 +1937,25 @@ def calculate_twr_and_nav(portfolio_id):
     cf_df = cashflow_repository.list_cashflows(portfolio_id)
 
     if not trades_df.empty:
+        trades_df = trades_df.copy()
+        trades_df["date"] = pd.to_datetime(trades_df["date"], errors="coerce")
+        trades_df = trades_df.dropna(subset=["date"]).sort_values(
+            ["date", "id"] if "id" in trades_df.columns else ["date"],
+            kind="stable",
+        )
+        trades_df["date"] = trades_df["date"].dt.strftime("%Y-%m-%d")
         trades_df["stock_id"] = trades_df["stock_id"].apply(normalize_stock_id)
+        trades_df = trades_df.reset_index(drop=True)
+
+    if not cf_df.empty:
+        cf_df = cf_df.copy()
+        cf_df["date"] = pd.to_datetime(cf_df["date"], errors="coerce")
+        cf_df = cf_df.dropna(subset=["date"]).sort_values(
+            ["date", "id"] if "id" in cf_df.columns else ["date"],
+            kind="stable",
+        )
+        cf_df["date"] = cf_df["date"].dt.strftime("%Y-%m-%d")
+        cf_df = cf_df.reset_index(drop=True)
 
     dates = []
     if not trades_df.empty:
@@ -2001,9 +2083,13 @@ def calculate_twr_and_nav(portfolio_id):
     events_by_date = {d: {"trades": [], "cf": []} for d in date_range}
 
     for _, r in trades_df.iterrows():
-        events_by_date[r["date"]]["trades"].append(r)
+        event_date = str(r["date"])
+        if event_date in events_by_date:
+            events_by_date[event_date]["trades"].append(r)
     for _, r in cf_df.iterrows():
-        events_by_date[r["date"]]["cf"].append(r)
+        event_date = str(r["date"])
+        if event_date in events_by_date:
+            events_by_date[event_date]["cf"].append(r)
 
     trade_price_fallback = {}
     if not trades_df.empty:
@@ -2994,10 +3080,21 @@ def save_trade_cycle_ai_review(portfolio_id, stock_id, cycle_no, review_text):
 
 def ai_vision_single_trade(image_bytes):
     if _get_gemini_client() is None:
-        return [{"stock_id": "2308", "price": 1375.0, "shares": 25, "_mock": True}]
+        return [
+            {
+                "trade_date": "",
+                "side": "buy",
+                "stock_id": "2308",
+                "price": 1375.0,
+                "shares": 25,
+                "_mock": True,
+            }
+        ]
 
     prompt = """你是一個台灣股票交易資料擷取助手。
 請仔細閱讀圖片中的交易紀錄（可能是券商 App 或對帳單截圖），擷取所有交易資訊：
+- trade_date: 交易日期，格式 YYYY-MM-DD；如果圖片中看不清楚或沒有日期，請填空字串
+- side: 只需判斷這筆是 buy 或 sell，請不要判斷 Buy / Add / Reduce / Close
 - stock_id: 純數字股票代號（例如 2330，不含 .TW 或中文名稱）
 - price: 成交均價（數字，保留小數點後最多2位）
 - shares: 成交股數（整數）
@@ -3005,7 +3102,7 @@ def ai_vision_single_trade(image_bytes):
 如果圖片中有多筆交易，請回傳 JSON 陣列；如果只有一筆，回傳 JSON 物件或陣列皆可。
 請嚴格回傳 JSON 格式，不要加任何說明文字。
 範例格式：
-[{"stock_id": "2330", "price": 750.0, "shares": 1000}, ...]"""
+[{"trade_date": "2026-04-16", "side": "buy", "stock_id": "2330", "price": 750.0, "shares": 1000}, ...]"""
 
     text, error = _call_gemini_with_fallback(image_bytes, prompt)
     if error == "quota":
@@ -3028,6 +3125,12 @@ def ai_vision_single_trade(image_bytes):
 
         for item in parsed_list:
             item["stock_id"] = normalize_stock_id(str(item.get("stock_id", "")))
+            item["trade_date"] = _normalize_ai_trade_date(
+                item.get("trade_date") or item.get("date")
+            )
+            item["side"] = _normalize_ai_trade_side(
+                item.get("side") or item.get("action") or item.get("direction")
+            )
         return parsed_list
     except Exception:
         st.error("⚠️ AI 回傳格式無法解析，請稍後再試或手動填寫。")
@@ -3073,8 +3176,32 @@ def ai_vision_portfolio(image_bytes):
 
 
 def process_trade_derivation(portfolio_id, parsed_data):
-    inv_df = get_inventory(portfolio_id, parsed_data["stock_id"])
+    stock_id = normalize_stock_id(parsed_data.get("stock_id", ""))
+    shares = int(pd.to_numeric(parsed_data.get("shares", 0), errors="coerce") or 0)
+    trade_date = _normalize_ai_trade_date(
+        parsed_data.get("trade_date") or parsed_data.get("date")
+    )
+    side = _normalize_ai_trade_side(
+        parsed_data.get("side") or parsed_data.get("action") or parsed_data.get("direction")
+    )
+
+    if not stock_id:
+        return "Buy"
+
+    inv_df = get_inventory_as_of_date(
+        portfolio_id,
+        stock_id=stock_id,
+        as_of_date=trade_date or None,
+    )
     current_shares = 0
     if not inv_df.empty:
         current_shares = inv_df.iloc[0]["current_shares"]
+
+    if side == "sell":
+        if current_shares <= 0:
+            return "Reduce"
+        if shares > 0 and shares >= current_shares:
+            return "Close"
+        return "Reduce"
+
     return "Buy" if current_shares == 0 else "Add"
