@@ -271,7 +271,9 @@ def get_portfolio_state(portfolio_id):
 
 def create_portfolio(name, initial_cash=0.0):
     try:
-        return portfolio_repository.create_portfolio(name, initial_cash)
+        portfolio_id = portfolio_repository.create_portfolio(name, initial_cash)
+        invalidate_runtime_data_caches()
+        return portfolio_id
     except Exception as exc:
         err_text = str(exc).lower()
         if "duplicate" in err_text or "23505" in err_text or "unique" in err_text:
@@ -285,6 +287,7 @@ def delete_portfolio_and_related_data(portfolio_id):
     trade_repository.delete_portfolio_trades(portfolio_id)
     cashflow_repository.delete_portfolio_cashflows(portfolio_id)
     portfolio_repository.delete_portfolio(portfolio_id)
+    invalidate_runtime_data_caches()
 
 
 def get_portfolio_trades_df(portfolio_id):
@@ -958,6 +961,7 @@ def execute_trade(
     )
     recalculate_portfolio_cash(portfolio_id)
     mark_nav_snapshots_dirty(portfolio_id, date)
+    invalidate_runtime_data_caches()
 
 
 def update_trade_record(
@@ -1037,6 +1041,7 @@ def update_trade_record(
     recalculate_portfolio_cash(portfolio_id)
     old_date = str(existing_trade["date"] or date)
     mark_nav_snapshots_dirty(portfolio_id, min(old_date, date))
+    invalidate_runtime_data_caches()
 
 
 def update_holding_risk_targets(
@@ -1111,6 +1116,7 @@ def update_holding_risk_targets(
             "trading_notes": stored_notes,
         },
     )
+    invalidate_runtime_data_caches()
 
 
 def delete_trade_record(portfolio_id, trade_id):
@@ -1127,6 +1133,7 @@ def delete_trade_record(portfolio_id, trade_id):
 
     recalculate_portfolio_cash(portfolio_id)
     mark_nav_snapshots_dirty(portfolio_id, str(existing_trade["date"]))
+    invalidate_runtime_data_caches()
 
 
 def recalculate_portfolio_cash(portfolio_id):
@@ -1173,7 +1180,7 @@ def recalculate_portfolio_cash(portfolio_id):
 
 
 def auto_process_settlement(portfolio_id):
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = get_tw_now().strftime("%Y-%m-%d")
     holiday_dates = get_settlement_blocked_dates()
     rows = trade_repository.list_unsettled_trades(portfolio_id, is_disposed=False)
 
@@ -1188,13 +1195,16 @@ def auto_process_settlement(portfolio_id):
             trade_repository.mark_trade_settled(row["id"])
             changed += 1
 
-    recalculate_portfolio_cash(portfolio_id)
+    if changed > 0:
+        recalculate_portfolio_cash(portfolio_id)
+        invalidate_runtime_data_caches()
 
 
 def execute_cashflow(portfolio_id, date, cf_type, amount):
     cashflow_repository.insert_cashflow(portfolio_id, date, cf_type, amount)
     recalculate_portfolio_cash(portfolio_id)
     mark_nav_snapshots_dirty(portfolio_id, date)
+    invalidate_runtime_data_caches()
 
 
 def get_macro_journals():
@@ -1283,14 +1293,30 @@ def get_manual_price_overrides(stock_ids=None):
     return manual_price_override_repository.get_overrides(normalized)
 
 
+def invalidate_runtime_data_caches():
+    cache_funcs = [
+        fetch_finmind_last_close,
+        fetch_finmind_price_history,
+        fetch_yfinance_history,
+        get_holdings_detail,
+    ]
+    for cache_func in cache_funcs:
+        try:
+            cache_func.clear()
+        except Exception:
+            pass
+
+
 def set_manual_price_override(stock_id, price):
     stock_id = normalize_stock_id(stock_id)
     manual_price_override_repository.set_override(stock_id, price)
+    invalidate_runtime_data_caches()
 
 
 def delete_manual_price_override(stock_id):
     stock_id = normalize_stock_id(stock_id)
     manual_price_override_repository.delete_override(stock_id)
+    invalidate_runtime_data_caches()
 
 
 def _normalize_history_index(data_obj):
@@ -1306,6 +1332,7 @@ def _normalize_history_index(data_obj):
     return normalized.sort_index()
 
 
+@st.cache_data(ttl=120)
 def fetch_finmind_last_close(stock_id, lookback_days=45):
     sid = normalize_stock_id(stock_id)
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -1608,6 +1635,63 @@ def refresh_price_snapshots_for_tickers(stock_ids, start_date, end_date=None):
     price_df, _, _ = fetch_yfinance_history(normalized_ids, start_date=start_date, period=None)
     written = upsert_price_snapshots(price_df, source="auto_history")
     return {"written": written, "tickers": len(normalized_ids)}
+
+
+@st.cache_data(ttl=120)
+def get_latest_price_snapshot_payload(stock_ids, latest_trading_date=None):
+    normalized_ids = [normalize_stock_id(s) for s in stock_ids if str(s).strip()]
+    normalized_ids = list(dict.fromkeys(normalized_ids))
+    if not normalized_ids:
+        return {}
+
+    target_date = (
+        pd.to_datetime(latest_trading_date).strftime("%Y-%m-%d")
+        if latest_trading_date
+        else get_latest_tw_trading_date()
+    )
+    min_latest = get_price_snapshot_min_latest_date(normalized_ids)
+    if min_latest is None or min_latest < target_date:
+        refresh_start = min_latest or (
+            pd.to_datetime(target_date) - pd.Timedelta(days=7)
+        ).strftime("%Y-%m-%d")
+        refresh_price_snapshots_for_tickers(
+            normalized_ids,
+            start_date=refresh_start,
+            end_date=target_date,
+        )
+
+    snapshot_rows = price_snapshot_repository.get_snapshot_rows(
+        normalized_ids,
+        (pd.to_datetime(target_date) - pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
+        target_date,
+    )
+    if not snapshot_rows:
+        return {}
+
+    snapshot_df = pd.DataFrame(snapshot_rows)
+    if snapshot_df.empty:
+        return {}
+
+    snapshot_df["date"] = pd.to_datetime(snapshot_df["date"], errors="coerce")
+    snapshot_df["close_price"] = pd.to_numeric(
+        snapshot_df["close_price"], errors="coerce"
+    )
+    snapshot_df = snapshot_df.dropna(subset=["date", "close_price"])
+    if snapshot_df.empty:
+        return {}
+
+    snapshot_df["stock_id"] = snapshot_df["stock_id"].apply(normalize_stock_id)
+    snapshot_df = snapshot_df.sort_values(["stock_id", "date"], kind="stable")
+
+    latest_map = {}
+    for sid, group in snapshot_df.groupby("stock_id", sort=False):
+        last_row = group.iloc[-1]
+        latest_map[sid] = {
+            "price": float(last_row.get("close_price", 0) or 0),
+            "source": str(last_row.get("source", "") or ""),
+            "date": pd.to_datetime(last_row["date"]).strftime("%Y-%m-%d"),
+        }
+    return latest_map
 
 
 def refresh_portfolio_price_snapshots(portfolio_id):
@@ -2732,6 +2816,7 @@ def summarize_closed_stock_trade_cycles(portfolio_id, stock_id, portfolio_hist_d
     return pd.DataFrame(closed_summaries)
 
 
+@st.cache_data(ttl=20)
 def get_holdings_detail(portfolio_id):
     t_df = trade_repository.list_trades(portfolio_id)
 
@@ -2769,7 +2854,10 @@ def get_holdings_detail(portfolio_id):
 
     tickers = [h["Stock"] for h in active_holdings]
     manual_overrides = get_manual_price_overrides(tickers)
-    price_df, _, _ = fetch_yfinance_history(tickers, period="5d")
+    snapshot_payload = get_latest_price_snapshot_payload(
+        tickers,
+        latest_trading_date=get_latest_tw_trading_date(),
+    )
     display_names = get_stock_display_names(tickers)
 
     results = []
@@ -2783,33 +2871,23 @@ def get_holdings_detail(portfolio_id):
             current_price = float(manual_price)
             price_source = "手動覆蓋"
         else:
-            finmind_price = fetch_finmind_last_close(sid)
-            if finmind_price > 0:
-                current_price = finmind_price
-                price_source = "FinMind"
+            snapshot_info = snapshot_payload.get(sid, {})
+            snapshot_price = float(snapshot_info.get("price", 0) or 0)
+            snapshot_source = str(snapshot_info.get("source", "") or "")
+            if snapshot_price > 0:
+                current_price = snapshot_price
+                price_source = (
+                    f"快照/{snapshot_source}"
+                    if snapshot_source
+                    else "價格快照"
+                )
             else:
-                if not price_df.empty and sid in price_df.columns:
-                    valid_p = price_df[sid].dropna()
-                    if not valid_p.empty:
-                        current_price = float(valid_p.iloc[-1])
-
-                if current_price <= 0:
-                    for candidate in get_symbol_candidates(sid):
-                        try:
-                            t_obj = yf.Ticker(candidate)
-                            fast_info = getattr(t_obj, "fast_info", None)
-                            if fast_info:
-                                current_price = float(fast_info.get("lastPrice", 0) or 0)
-                            if current_price <= 0:
-                                hist_last = t_obj.history(period="5d", auto_adjust=True)
-                                if not hist_last.empty:
-                                    current_price = float(hist_last["Close"].dropna().iloc[-1])
-                            if current_price > 0:
-                                update_stock_full_symbol(sid, candidate)
-                                break
-                        except Exception:
-                            current_price = 0.0
-                price_source = "即時報價" if current_price > 0 else "無即時報價"
+                finmind_price = fetch_finmind_last_close(sid)
+                if finmind_price > 0:
+                    current_price = finmind_price
+                    price_source = "FinMind"
+                else:
+                    price_source = "無即時報價"
 
         if current_price > 0:
             final_p_display = current_price
