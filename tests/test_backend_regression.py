@@ -28,6 +28,60 @@ def test_latest_official_trading_date_before_and_after_close(monkeypatch):
     assert backend.get_latest_official_tw_trading_date() == "2026-04-08"
 
 
+def test_ensure_portfolios_official_nav_synced_rebuilds_only_stale_or_dirty(monkeypatch):
+    monkeypatch.setattr(backend, "ensure_db_schema", lambda: None)
+    monkeypatch.setattr(
+        backend,
+        "get_latest_official_tw_trading_date",
+        lambda date_value=None, holiday_dates=None: "2026-04-20",
+    )
+
+    snapshot_map = {
+        1: pd.DataFrame([{"Date": "2026-04-18"}]),
+        2: pd.DataFrame([{"Date": "2026-04-20"}]),
+        3: pd.DataFrame([{"Date": "2026-04-20"}]),
+    }
+    dirty_map = {1: None, 2: None, 3: "2026-04-19"}
+    called = []
+
+    monkeypatch.setattr(
+        backend,
+        "get_daily_nav_snapshots_df",
+        lambda pid: snapshot_map.get(pid, pd.DataFrame()),
+    )
+    monkeypatch.setattr(
+        backend.portfolio_repository,
+        "get_nav_dirty_from_date",
+        lambda pid: dirty_map.get(pid),
+    )
+    monkeypatch.setattr(
+        backend,
+        "calculate_twr_and_nav",
+        lambda pid: called.append(pid) or (pd.DataFrame(), 0, 0),
+    )
+
+    result = backend.ensure_portfolios_official_nav_synced([1, 2, 3], "2026-04-20")
+
+    assert called == [1, 3]
+    assert result == {
+        "official_date": "2026-04-20",
+        "checked": 3,
+        "synced": 2,
+        "skipped": 1,
+    }
+
+
+def test_warrant_like_code_keeps_numeric_symbol_candidates(monkeypatch):
+    monkeypatch.setattr(
+        backend.stock_name_repository,
+        "get_full_symbol",
+        lambda sid: None,
+    )
+
+    assert backend.normalize_stock_id("045123 富邦台積電購01") == "045123"
+    assert backend.get_symbol_candidates("045123") == ["045123.TW", "045123.TWO"]
+
+
 def test_trade_edit_delete_rebuilds_nav_and_blocks_invalid_actions(temp_portfolio):
     backend.execute_cashflow(temp_portfolio, "2026-03-27", "Deposit", 20000)
     backend.execute_trade(

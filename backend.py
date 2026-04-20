@@ -481,6 +481,51 @@ def get_latest_official_tw_trading_date(date_value=None, holiday_dates=None):
     return get_latest_tw_trading_date(current, holiday_dates)
 
 
+def ensure_portfolios_official_nav_synced(portfolio_ids, target_date=None):
+    ensure_db_schema()
+    normalized_ids = []
+    for pid in portfolio_ids or []:
+        try:
+            normalized_ids.append(int(pid))
+        except Exception:
+            continue
+    normalized_ids = list(dict.fromkeys(normalized_ids))
+    if not normalized_ids:
+        return {"official_date": None, "checked": 0, "synced": 0, "skipped": 0}
+
+    official_date = str(
+        target_date or get_latest_official_tw_trading_date()
+    )
+    synced = 0
+    skipped = 0
+
+    for pid in normalized_ids:
+        dirty_from_date = portfolio_repository.get_nav_dirty_from_date(pid)
+        nav_df = get_daily_nav_snapshots_df(pid)
+        latest_snapshot_date = (
+            str(nav_df.iloc[-1]["Date"])
+            if nav_df is not None and not nav_df.empty
+            else None
+        )
+
+        should_rebuild = bool(dirty_from_date)
+        if latest_snapshot_date is None or latest_snapshot_date < official_date:
+            should_rebuild = True
+
+        if should_rebuild:
+            calculate_twr_and_nav(pid)
+            synced += 1
+        else:
+            skipped += 1
+
+    return {
+        "official_date": official_date,
+        "checked": len(normalized_ids),
+        "synced": synced,
+        "skipped": skipped,
+    }
+
+
 def estimate_settlement_date(trade_date, business_days=2, holiday_dates=None):
     current = pd.to_datetime(trade_date)
     if holiday_dates is None:

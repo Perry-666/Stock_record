@@ -2674,10 +2674,12 @@ from backend import (
     delete_notebook_article,
     delete_portfolio_and_related_data,
     ensure_db_schema,
+    ensure_portfolios_official_nav_synced,
     execute_cashflow,
     execute_trade,
     get_market_holidays_df,
     get_holdings_detail,
+    get_latest_official_tw_trading_date,
     get_latest_tw_trading_date,
     get_macro_journals,
     get_notebook_articles,
@@ -3389,6 +3391,19 @@ else:
         if portfolios_df.empty:
             st.warning("請先上方新增第一個資金池！")
             st.stop()
+
+        official_nav_date = get_latest_official_tw_trading_date()
+        nav_sync_signature = (
+            f"{official_nav_date}|"
+            + ",".join(str(pid) for pid in portfolios_df["id"].tolist())
+        )
+        if st.session_state.get("official_nav_sync_signature") != nav_sync_signature:
+            with st.spinner("同步收盤後正式 NAV 中..."):
+                ensure_portfolios_official_nav_synced(
+                    portfolios_df["id"].tolist(),
+                    target_date=official_nav_date,
+                )
+            st.session_state["official_nav_sync_signature"] = nav_sync_signature
 
         portfolios_df = portfolios_df.sort_values("id", kind="stable").reset_index(
             drop=True
