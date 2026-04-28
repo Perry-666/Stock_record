@@ -2727,7 +2727,6 @@ from backend import (
     normalize_stock_id,
     get_portfolio_trades_df,
     process_trade_derivation,
-    resolve_stock_id_from_text,
     save_macro_journal,
     sync_twse_market_holidays,
     summarize_closed_stock_trade_cycles,
