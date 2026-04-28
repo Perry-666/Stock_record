@@ -39,6 +39,8 @@ TRADE_RISK_META_PREFIX = "[[TRADE_RISK]]"
 TW_MARKET_CLOSE_HOUR = 13
 TW_MARKET_CLOSE_MINUTE = 30
 TW_MARKET_FINALIZATION_DELAY_MINUTES = 30
+_SCHEMA_ENSURED_IN_PROCESS = False
+_HOLIDAY_SYNCED_DATE_IN_PROCESS = None
 
 
 def normalize_stock_id(s):
@@ -54,6 +56,14 @@ def get_tw_now():
     return datetime.now()
 
 def ensure_db_schema():
+    global _SCHEMA_ENSURED_IN_PROCESS, _HOLIDAY_SYNCED_DATE_IN_PROCESS
+    if _SCHEMA_ENSURED_IN_PROCESS:
+        today_key = datetime.now().strftime("%Y-%m-%d")
+        if _HOLIDAY_SYNCED_DATE_IN_PROCESS != today_key:
+            sync_twse_market_holidays()
+            _HOLIDAY_SYNCED_DATE_IN_PROCESS = today_key
+        return
+
     conn = get_db_connection()
     try:
         portfolio_cols = {
@@ -254,7 +264,11 @@ def ensure_db_schema():
     finally:
         conn.close()
 
-    sync_twse_market_holidays()
+    _SCHEMA_ENSURED_IN_PROCESS = True
+    today_key = datetime.now().strftime("%Y-%m-%d")
+    if _HOLIDAY_SYNCED_DATE_IN_PROCESS != today_key:
+        sync_twse_market_holidays()
+        _HOLIDAY_SYNCED_DATE_IN_PROCESS = today_key
 
 
 def get_portfolios():
@@ -267,6 +281,38 @@ def get_portfolios():
 def get_portfolio_state(portfolio_id):
     state = portfolio_repository.get_state(portfolio_id)
     return state["t0_cash"], state["t2_cash"]
+
+
+def get_portfolio_net_invested_amount(portfolio_id):
+    initial_cash = float(portfolio_repository.get_initial_cash(portfolio_id) or 0.0)
+
+    cf_df = cashflow_repository.list_cashflows(portfolio_id, columns="type,amount")
+    net_cashflow = 0.0
+    if not cf_df.empty:
+        for _, row in cf_df.iterrows():
+            cf_type = str(row.get("type", "") or "").strip()
+            amount = float(row.get("amount", 0) or 0)
+            if cf_type == "Deposit":
+                net_cashflow += amount
+            elif cf_type == "Withdrawal":
+                net_cashflow -= amount
+
+    trades_df = trade_repository.list_trades(
+        portfolio_id, columns="action,price,shares"
+    )
+    setup_cost = 0.0
+    if not trades_df.empty:
+        setup_rows = trades_df[trades_df["action"].astype(str) == "Setup"].copy()
+        if not setup_rows.empty:
+            setup_rows["price"] = pd.to_numeric(
+                setup_rows["price"], errors="coerce"
+            ).fillna(0.0)
+            setup_rows["shares"] = pd.to_numeric(
+                setup_rows["shares"], errors="coerce"
+            ).fillna(0.0)
+            setup_cost = float((setup_rows["price"] * setup_rows["shares"]).sum())
+
+    return float(initial_cash + net_cashflow + setup_cost)
 
 
 def create_portfolio(name, initial_cash=0.0):
@@ -1343,6 +1389,7 @@ def invalidate_runtime_data_caches():
         fetch_finmind_last_close,
         fetch_finmind_price_history,
         fetch_yfinance_history,
+        get_latest_price_snapshot_payload,
         get_holdings_detail,
     ]
     for cache_func in cache_funcs:
@@ -2056,6 +2103,128 @@ def get_stock_display_names(tickers):
         else:
             res[t_in] = t_in
     return res
+
+
+@st.cache_data(ttl=86400)
+def fetch_finmind_stock_info(include_warrant=False):
+    params = {
+        "dataset": "TaiwanStockInfoWithWarrant"
+        if include_warrant
+        else "TaiwanStockInfo"
+    }
+    headers = {}
+    token = os.getenv("FINMIND_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        response = _session.get(
+            FINMIND_API_URL,
+            params=params,
+            headers=headers or None,
+            timeout=10,
+        )
+        if response.status_code != 200:
+            return pd.DataFrame()
+        payload = response.json()
+        stock_df = pd.DataFrame(payload.get("data", []) or [])
+        if stock_df.empty:
+            return pd.DataFrame()
+
+        column_map = {
+            "stock_id": "stock_id",
+            "stock_name": "stock_name",
+            "type": "type",
+            "industry_category": "industry_category",
+            "date": "date",
+        }
+        existing_cols = [col for col in column_map if col in stock_df.columns]
+        stock_df = stock_df[existing_cols].copy()
+        if "stock_id" not in stock_df.columns or "stock_name" not in stock_df.columns:
+            return pd.DataFrame()
+
+        stock_df["stock_id"] = stock_df["stock_id"].astype(str).str.strip()
+        stock_df["stock_name"] = stock_df["stock_name"].astype(str).str.strip()
+        if "type" in stock_df.columns:
+            stock_df["type"] = stock_df["type"].astype(str).str.strip().str.lower()
+        else:
+            stock_df["type"] = ""
+
+        stock_df = stock_df[
+            stock_df["stock_id"].str.fullmatch(r"\d+")
+            & stock_df["stock_name"].ne("")
+        ].copy()
+        if stock_df.empty:
+            return pd.DataFrame()
+
+        stock_df["name_normalized"] = (
+            stock_df["stock_name"]
+            .str.replace(r"\s+", "", regex=True)
+            .str.upper()
+        )
+        stock_df = stock_df.drop_duplicates(
+            subset=["stock_id", "name_normalized"], keep="last"
+        ).reset_index(drop=True)
+        return stock_df
+    except Exception:
+        return pd.DataFrame()
+
+
+def resolve_stock_id_from_text(raw_text):
+    normalized_text = str(raw_text or "").strip()
+    if not normalized_text:
+        return ""
+
+    direct_id = normalize_stock_id(normalized_text)
+    if re.fullmatch(r"\d+", direct_id or ""):
+        return direct_id
+
+    search_key = re.sub(r"\s+", "", normalized_text).upper()
+    if not search_key:
+        return ""
+
+    for include_warrant in [False, True]:
+        stock_df = fetch_finmind_stock_info(include_warrant=include_warrant)
+        if stock_df.empty:
+            continue
+
+        exact_df = stock_df[stock_df["name_normalized"] == search_key].copy()
+        candidate_df = exact_df if not exact_df.empty else stock_df[
+            stock_df["name_normalized"].str.contains(search_key, regex=False)
+        ].copy()
+        if candidate_df.empty:
+            continue
+
+        type_priority = {"twse": 0, "tpex": 1, "emerging": 2}
+        candidate_df["type_rank"] = candidate_df["type"].map(type_priority).fillna(9)
+        candidate_df["name_len"] = candidate_df["name_normalized"].str.len()
+        candidate_df["id_len"] = candidate_df["stock_id"].str.len()
+        candidate_df = candidate_df.sort_values(
+            ["type_rank", "name_len", "id_len", "stock_id"],
+            kind="stable",
+        )
+        match_row = candidate_df.iloc[0]
+        matched_id = normalize_stock_id(match_row.get("stock_id", ""))
+        matched_name = str(match_row.get("stock_name", "") or "").strip()
+        matched_type = str(match_row.get("type", "") or "").strip().lower()
+
+        full_symbol = None
+        if matched_type == "twse":
+            full_symbol = f"{matched_id}.TW"
+        elif matched_type == "tpex":
+            full_symbol = f"{matched_id}.TWO"
+
+        try:
+            stock_name_repository.upsert_stock_name(
+                matched_id,
+                matched_name or matched_id,
+                full_symbol,
+            )
+        except Exception:
+            pass
+        return matched_id
+
+    return ""
 
 
 def calculate_twr_and_nav(portfolio_id):
@@ -3208,6 +3377,7 @@ def ai_vision_single_trade(image_bytes):
                 "trade_date": "",
                 "side": "buy",
                 "stock_id": "2308",
+                "stock_name": "台達電",
                 "price": 1375.0,
                 "shares": 25,
                 "_mock": True,
@@ -3218,14 +3388,15 @@ def ai_vision_single_trade(image_bytes):
 請仔細閱讀圖片中的交易紀錄（可能是券商 App 或對帳單截圖），擷取所有交易資訊：
 - trade_date: 交易日期，格式 YYYY-MM-DD；如果圖片中看不清楚或沒有日期，請填空字串
 - side: 只需判斷這筆是 buy 或 sell，請不要判斷 Buy / Add / Reduce / Close
-- stock_id: 純數字股票代號（例如 2330，不含 .TW 或中文名稱）
+- stock_id: 純數字股票代號（例如 2330，不含 .TW 或中文名稱）；如果圖片裡沒有代號就填空字串
+- stock_name: 股票中文名稱；如果圖片裡只有名稱沒有代號，請務必填這個欄位
 - price: 成交均價（數字，保留小數點後最多2位）
 - shares: 成交股數（整數）
 
 如果圖片中有多筆交易，請回傳 JSON 陣列；如果只有一筆，回傳 JSON 物件或陣列皆可。
 請嚴格回傳 JSON 格式，不要加任何說明文字。
 範例格式：
-[{"trade_date": "2026-04-16", "side": "buy", "stock_id": "2330", "price": 750.0, "shares": 1000}, ...]"""
+[{"trade_date": "2026-04-16", "side": "buy", "stock_id": "2330", "stock_name": "台積電", "price": 750.0, "shares": 1000}, ...]"""
 
     text, error = _call_gemini_with_fallback(image_bytes, prompt)
     if error == "quota":
@@ -3246,15 +3417,43 @@ def ai_vision_single_trade(image_bytes):
         else:
             return None
 
-        for item in parsed_list:
-            item["stock_id"] = normalize_stock_id(str(item.get("stock_id", "")))
+        normalized_items = []
+        for idx, item in enumerate(parsed_list):
+            item = dict(item or {})
+            raw_stock_id = normalize_stock_id(str(item.get("stock_id", "")))
+            raw_stock_name = str(
+                item.get("stock_name")
+                or item.get("name")
+                or item.get("stock")
+                or ""
+            ).strip()
+            resolved_stock_id = raw_stock_id or resolve_stock_id_from_text(raw_stock_name)
+            if not resolved_stock_id:
+                resolved_stock_id = resolve_stock_id_from_text(
+                    item.get("stock_id") or item.get("stock_name") or item.get("name")
+                )
+            item["stock_id"] = normalize_stock_id(str(resolved_stock_id or ""))
+            item["stock_name"] = raw_stock_name
             item["trade_date"] = _normalize_ai_trade_date(
                 item.get("trade_date") or item.get("date")
             )
             item["side"] = _normalize_ai_trade_side(
                 item.get("side") or item.get("action") or item.get("direction")
             )
-        return parsed_list
+            item["_sort_index"] = idx
+            normalized_items.append(item)
+
+        normalized_items = sorted(
+            normalized_items,
+            key=lambda row: (
+                row.get("trade_date", "") == "",
+                row.get("trade_date", "") or "9999-12-31",
+                int(row.get("_sort_index", 0) or 0),
+            ),
+        )
+        for item in normalized_items:
+            item.pop("_sort_index", None)
+        return normalized_items
     except Exception:
         st.error("⚠️ AI 回傳格式無法解析，請稍後再試或手動填寫。")
         return None
@@ -3300,6 +3499,10 @@ def ai_vision_portfolio(image_bytes):
 
 def process_trade_derivation(portfolio_id, parsed_data):
     stock_id = normalize_stock_id(parsed_data.get("stock_id", ""))
+    if not stock_id or not re.fullmatch(r"\d+", stock_id):
+        stock_id = resolve_stock_id_from_text(
+            parsed_data.get("stock_name") or parsed_data.get("stock_id", "")
+        )
     shares = int(pd.to_numeric(parsed_data.get("shares", 0), errors="coerce") or 0)
     trade_date = _normalize_ai_trade_date(
         parsed_data.get("trade_date") or parsed_data.get("date")

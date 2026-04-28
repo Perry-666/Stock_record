@@ -82,6 +82,30 @@ def test_warrant_like_code_keeps_numeric_symbol_candidates(monkeypatch):
     assert backend.get_symbol_candidates("045123") == ["045123.TW", "045123.TWO"]
 
 
+def test_get_portfolio_net_invested_amount_includes_setup_and_deposits(temp_portfolio):
+    backend.execute_cashflow(temp_portfolio, "2026-03-27", "Deposit", 20000)
+    backend.execute_trade(
+        temp_portfolio,
+        "2026-03-30",
+        "2330",
+        "Setup",
+        780,
+        100,
+        False,
+        True,
+        True,
+        True,
+        True,
+        "setup lot",
+    )
+    backend.execute_cashflow(temp_portfolio, "2026-03-31", "Deposit", 5000)
+    backend.execute_cashflow(temp_portfolio, "2026-04-01", "Withdrawal", 3000)
+
+    assert backend.get_portfolio_net_invested_amount(temp_portfolio) == pytest.approx(
+        400000.0
+    )
+
+
 def test_trade_edit_delete_rebuilds_nav_and_blocks_invalid_actions(temp_portfolio):
     backend.execute_cashflow(temp_portfolio, "2026-03-27", "Deposit", 20000)
     backend.execute_trade(
@@ -407,6 +431,68 @@ def test_process_trade_derivation_uses_side_and_historical_inventory(temp_portfo
         )
         == "Close"
     )
+
+
+def test_process_trade_derivation_can_resolve_stock_id_from_name(temp_portfolio, monkeypatch):
+    monkeypatch.setattr(
+        backend,
+        "resolve_stock_id_from_text",
+        lambda raw_text: "2337" if str(raw_text) == "旺宏" else "",
+    )
+
+    assert (
+        backend.process_trade_derivation(
+            temp_portfolio,
+            {
+                "trade_date": "2026-04-01",
+                "stock_name": "旺宏",
+                "side": "buy",
+                "shares": 1000,
+            },
+        )
+        == "Buy"
+    )
+
+
+def test_ai_vision_single_trade_resolves_name_and_sorts_old_to_new(monkeypatch):
+    monkeypatch.setattr(backend, "_get_gemini_client", lambda: object())
+    monkeypatch.setattr(
+        backend,
+        "_call_gemini_with_fallback",
+        lambda image_bytes, prompt: (
+            json.dumps(
+                [
+                    {
+                        "trade_date": "2026-04-18",
+                        "side": "sell",
+                        "stock_id": "",
+                        "stock_name": "旺宏",
+                        "price": 28.5,
+                        "shares": 1000,
+                    },
+                    {
+                        "trade_date": "2026-04-16",
+                        "side": "buy",
+                        "stock_id": "",
+                        "stock_name": "台積電",
+                        "price": 825.0,
+                        "shares": 1000,
+                    },
+                ]
+            ),
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        backend,
+        "resolve_stock_id_from_text",
+        lambda raw_text: {"旺宏": "2337", "台積電": "2330"}.get(str(raw_text), ""),
+    )
+
+    parsed = backend.ai_vision_single_trade(b"fake-image")
+
+    assert [row["trade_date"] for row in parsed] == ["2026-04-16", "2026-04-18"]
+    assert [row["stock_id"] for row in parsed] == ["2330", "2337"]
 
 
 def test_holdings_detail_has_holding_days_efficiency_and_risk_targets(temp_portfolio):

@@ -2055,190 +2055,215 @@ def render_trade_entry_panel(current_pid):
                 parsed_date.date() if not pd.isna(parsed_date) else default_trade_date
             )
             parsed_side = str(parsed.get("side") or "").strip().lower()
+            parsed_name = str(parsed.get("stock_name") or "").strip()
 
-            with st.container(border=True):
-                st.markdown(f"### 📑 正在核對: {parsed.get('stock_id')}")
-                render_trade_decision_reminder()
+            with st.form(
+                key=f"ai_trade_form_{stock_key}",
+                clear_on_submit=False,
+            ):
+                with st.container(border=True):
+                    heading_text = parsed.get("stock_id") or parsed_name or "未辨識標的"
+                    st.markdown(f"### 📑 正在核對: {heading_text}")
+                    render_trade_decision_reminder()
 
-                c1, c2 = st.columns(2)
-                with c1:
-                    t_date = st.date_input(
-                        "交易日期",
-                        parsed_default_date,
-                        key=f"date_{stock_key}",
-                    )
-                    t_stock = st.text_input(
-                        "股票代號",
-                        value=str(parsed.get("stock_id", "")),
-                        key=f"stock_{stock_key}",
-                    )
-                    if parsed_side:
-                        side_text = "買進" if parsed_side == "buy" else "賣出"
-                        st.caption(f"AI 判定方向：{side_text}")
-
-                c3, c4 = st.columns(2)
-                with c3:
-                    t_price = st.number_input(
-                        "價格",
-                        value=float(parsed.get("price", 0.0)),
-                        key=f"price_{stock_key}",
-                    )
-                with c4:
-                    t_shares = st.number_input(
-                        "股數",
-                        value=int(parsed.get("shares", 0)),
-                        step=100,
-                        key=f"shares_{stock_key}",
-                    )
-
-                derived_action = process_trade_derivation(
-                    current_pid,
-                    {
-                        "stock_id": t_stock,
-                        "trade_date": t_date.strftime("%Y-%m-%d"),
-                        "side": parsed_side,
-                        "shares": t_shares,
-                    },
-                )
-                action_key = f"action_{stock_key}"
-                action_sig_key = f"action_sig_{stock_key}"
-                action_signature = json.dumps(
-                    {
-                        "date": t_date.strftime("%Y-%m-%d"),
-                        "stock_id": str(t_stock or "").strip(),
-                        "side": parsed_side,
-                        "shares": int(t_shares or 0),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-                if st.session_state.get(action_sig_key) != action_signature:
-                    st.session_state[action_key] = derived_action
-                    st.session_state[action_sig_key] = action_signature
-
-                t_action = st.selectbox(
-                    "動作",
-                    ["Buy", "Add", "Reduce", "Close"],
-                    key=action_key,
-                )
-                st.caption(
-                    "系統會依 AI 判定的買/賣方向，結合該交易日期之前的持倉，自動推導 Buy / Add / Reduce / Close。"
-                )
-
-                is_disposed = st.checkbox("處置股", key=f"disp_{stock_key}")
-                t_take_profit_price, t_stop_loss_price = render_trade_risk_plan_inputs(
-                    f"{stock_key}_ai_risk",
-                    t_price,
-                    trade_action=t_action,
-                )
-                t_tech_score, t_chip_score, t_theme_score = render_trade_score_inputs(
-                    f"{stock_key}_ai",
-                    default_scores=(3, 3, 3),
-                )
-                notes_key = f"notes_{stock_key}"
-                sync_trade_notes_template(
-                    t_action,
-                    notes_key,
-                    f"last_action_{stock_key}",
-                )
-                t_notes = st.text_area(
-                    "交易心得",
-                    key=notes_key,
-                    height=320,
-                    help="首筆買進會預設四段式模板；加碼、減碼、平倉則預設留白。",
-                )
-
-                bc1, bc2, bc3 = st.columns(3)
-                if bc1.button(
-                    "✅ 寫入", use_container_width=True, key=f"save_{stock_key}"
-                ):
-                    try:
-                        execute_trade(
-                            current_pid,
-                            t_date.strftime("%Y-%m-%d"),
-                            t_stock,
-                            t_action,
-                            t_price,
-                            t_shares,
-                            is_disposed,
-                            0,
-                            0,
-                            0,
-                            0,
-                            t_notes,
-                            technical_score=t_tech_score,
-                            chip_score=t_chip_score,
-                            theme_score=t_theme_score,
-                            take_profit_price=t_take_profit_price,
-                            stop_loss_price=t_stop_loss_price,
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        t_date = st.date_input(
+                            "交易日期",
+                            parsed_default_date,
+                            key=f"date_{stock_key}",
                         )
-                        pop_ai_parsed_trade_at(idx)
-                        st.rerun()
-                    except ValueError as trade_error:
-                        st.error(str(trade_error))
-                if bc2.button(
-                    "⏭️ 跳過", use_container_width=True, key=f"skip_{stock_key}"
-                ):
+                        t_stock = st.text_input(
+                            "股票代號",
+                            value=str(parsed.get("stock_id", "")),
+                            key=f"stock_{stock_key}",
+                        )
+                        if parsed_name:
+                            st.caption(f"AI 辨識名稱：{parsed_name}")
+                        if parsed_side:
+                            side_text = "買進" if parsed_side == "buy" else "賣出"
+                            st.caption(f"AI 判定方向：{side_text}")
+
+                    c3, c4 = st.columns(2)
+                    with c3:
+                        t_price = st.number_input(
+                            "價格",
+                            value=float(parsed.get("price", 0.0)),
+                            key=f"price_{stock_key}",
+                        )
+                    with c4:
+                        t_shares = st.number_input(
+                            "股數",
+                            value=int(parsed.get("shares", 0)),
+                            step=100,
+                            key=f"shares_{stock_key}",
+                        )
+
+                    derived_action = process_trade_derivation(
+                        current_pid,
+                        {
+                            "stock_id": t_stock,
+                            "stock_name": parsed_name,
+                            "trade_date": t_date.strftime("%Y-%m-%d"),
+                            "side": parsed_side,
+                            "shares": t_shares,
+                        },
+                    )
+                    action_key = f"action_{stock_key}"
+                    action_sig_key = f"action_sig_{stock_key}"
+                    action_signature = json.dumps(
+                        {
+                            "date": t_date.strftime("%Y-%m-%d"),
+                            "stock_id": str(t_stock or "").strip(),
+                            "side": parsed_side,
+                            "shares": int(t_shares or 0),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    if st.session_state.get(action_sig_key) != action_signature:
+                        st.session_state[action_key] = derived_action
+                        st.session_state[action_sig_key] = action_signature
+
+                    t_action = st.selectbox(
+                        "動作",
+                        ["Buy", "Add", "Reduce", "Close"],
+                        key=action_key,
+                    )
+                    st.caption(
+                        "系統會依 AI 判定的買/賣方向，結合該交易日期之前的持倉，自動推導 Buy / Add / Reduce / Close。"
+                    )
+                    if not str(t_stock or "").strip() and parsed_name:
+                        st.warning("目前尚未自動反查到股票代號，請確認名稱或手動補上代號。")
+
+                    is_disposed = st.checkbox("處置股", key=f"disp_{stock_key}")
+                    t_take_profit_price, t_stop_loss_price = render_trade_risk_plan_inputs(
+                        f"{stock_key}_ai_risk",
+                        t_price,
+                        trade_action=t_action,
+                    )
+                    t_tech_score, t_chip_score, t_theme_score = render_trade_score_inputs(
+                        f"{stock_key}_ai",
+                        default_scores=(3, 3, 3),
+                    )
+                    notes_key = f"notes_{stock_key}"
+                    sync_trade_notes_template(
+                        t_action,
+                        notes_key,
+                        f"last_action_{stock_key}",
+                    )
+                    t_notes = st.text_area(
+                        "交易心得",
+                        key=notes_key,
+                        height=320,
+                        help="首筆買進會預設四段式模板；加碼、減碼、平倉則預設留白。",
+                    )
+
+                    bc1, bc2, bc3 = st.columns(3)
+                    ai_save = bc1.form_submit_button(
+                        "✅ 寫入", use_container_width=True
+                    )
+                    ai_skip = bc2.form_submit_button(
+                        "⏭️ 跳過", use_container_width=True
+                    )
+                    ai_cancel = bc3.form_submit_button(
+                        "🗑️ 取消", use_container_width=True
+                    )
+
+            if ai_save:
+                try:
+                    execute_trade(
+                        current_pid,
+                        t_date.strftime("%Y-%m-%d"),
+                        t_stock,
+                        t_action,
+                        t_price,
+                        t_shares,
+                        is_disposed,
+                        0,
+                        0,
+                        0,
+                        0,
+                        t_notes,
+                        technical_score=t_tech_score,
+                        chip_score=t_chip_score,
+                        theme_score=t_theme_score,
+                        take_profit_price=t_take_profit_price,
+                        stop_loss_price=t_stop_loss_price,
+                    )
+                    invalidate_portfolio_runtime_bundle(current_pid)
+                    show_ui_toast(f"{t_stock} 已寫入交易紀錄")
                     pop_ai_parsed_trade_at(idx)
                     st.rerun()
-                if bc3.button(
-                    "🗑️ 取消", use_container_width=True, key=f"cancel_{stock_key}"
-                ):
-                    set_ai_parsed_trade_group([])
-                    st.session_state["show_trade_entry_dialog"] = False
-                    st.rerun()
+                except ValueError as trade_error:
+                    st.error(str(trade_error))
+            if ai_skip:
+                pop_ai_parsed_trade_at(idx)
+                st.rerun()
+            if ai_cancel:
+                set_ai_parsed_trade_group([])
+                st.session_state["show_trade_entry_dialog"] = False
+                st.rerun()
 
     with tab_manual:
         st.subheader("⌨️ 手動新增交易")
         reset_manual_trade_form_state_if_needed()
-        render_trade_decision_reminder()
+        with st.form("manual_trade_form", clear_on_submit=False):
+            render_trade_decision_reminder()
 
-        m1, m2 = st.columns(2)
-        m_date = m1.date_input(
-            "交易日期",
-            default_trade_date,
-            key="manual_trade_date",
-        )
-        m_stock = m2.text_input("股票代號 (純代碼)", key="manual_trade_stock")
+            m1, m2 = st.columns(2)
+            m_date = m1.date_input(
+                "交易日期",
+                default_trade_date,
+                key="manual_trade_date",
+            )
+            m_stock = m2.text_input("股票代號 (純代碼)", key="manual_trade_stock")
 
-        m3, m4 = st.columns(2)
-        m_action = m3.selectbox(
-            "動作",
-            ["Buy", "Add", "Reduce", "Close"],
-            key="manual_trade_action",
-        )
-        m_price = m4.number_input("價格", value=0.0, key="manual_trade_price")
+            m3, m4 = st.columns(2)
+            m_action = m3.selectbox(
+                "動作",
+                ["Buy", "Add", "Reduce", "Close"],
+                key="manual_trade_action",
+            )
+            m_price = m4.number_input("價格", value=0.0, key="manual_trade_price")
 
-        m5, m6 = st.columns(2)
-        m_shares = m5.number_input(
-            "股數", value=1000, step=100, key="manual_trade_shares"
-        )
-        m_disposed = m6.checkbox("處置股", key="manual_trade_disposed")
+            m5, m6 = st.columns(2)
+            m_shares = m5.number_input(
+                "股數", value=1000, step=100, key="manual_trade_shares"
+            )
+            m_disposed = m6.checkbox("處置股", key="manual_trade_disposed")
 
-        m_take_profit_price, m_stop_loss_price = render_trade_risk_plan_inputs(
-            "manual_trade",
-            m_price,
-            trade_action=m_action,
-        )
+            m_take_profit_price, m_stop_loss_price = render_trade_risk_plan_inputs(
+                "manual_trade",
+                m_price,
+                trade_action=m_action,
+            )
 
-        m_tech_score, m_chip_score, m_theme_score = render_trade_score_inputs(
-            "manual_trade",
-            default_scores=(3, 3, 3),
-        )
-        sync_trade_notes_template(
-            m_action,
-            "manual_trade_notes",
-            "manual_trade_last_action",
-        )
-        m_notes = st.text_area(
-            "交易心得",
-            key="manual_trade_notes",
-            height=340,
-            help="首筆買進會預設四段式模板；加碼、減碼、平倉則預設留白。",
-        )
+            m_tech_score, m_chip_score, m_theme_score = render_trade_score_inputs(
+                "manual_trade",
+                default_scores=(3, 3, 3),
+            )
+            sync_trade_notes_template(
+                m_action,
+                "manual_trade_notes",
+                "manual_trade_last_action",
+            )
+            m_notes = st.text_area(
+                "交易心得",
+                key="manual_trade_notes",
+                height=340,
+                help="首筆買進會預設四段式模板；加碼、減碼、平倉則預設留白。",
+            )
 
-        btn_cols = st.columns([2, 1])
-        if btn_cols[0].button("✅ 手動寫入紀錄", use_container_width=True):
+            btn_cols = st.columns([2, 1])
+            manual_save = btn_cols[0].form_submit_button(
+                "✅ 手動寫入紀錄", use_container_width=True
+            )
+            manual_close = btn_cols[1].form_submit_button(
+                "關閉視窗", use_container_width=True
+            )
+
+        if manual_save:
             if m_stock:
                 try:
                     execute_trade(
@@ -2260,8 +2285,8 @@ def render_trade_entry_panel(current_pid):
                         take_profit_price=m_take_profit_price,
                         stop_loss_price=m_stop_loss_price,
                     )
-                    st.success(f"{m_stock} 已手動歸檔")
-                    time.sleep(0.5)
+                    invalidate_portfolio_runtime_bundle(current_pid)
+                    show_ui_toast(f"{m_stock} 已手動歸檔")
                     st.session_state["manual_trade_reset_pending"] = True
                     st.session_state["show_trade_entry_dialog"] = False
                     st.rerun()
@@ -2269,7 +2294,7 @@ def render_trade_entry_panel(current_pid):
                     st.error(str(trade_error))
             else:
                 st.error("請輸入股票代號")
-        if btn_cols[1].button("關閉視窗", use_container_width=True):
+        if manual_close:
             st.session_state["show_trade_entry_dialog"] = False
             st.rerun()
 
@@ -2294,114 +2319,119 @@ def render_trade_edit_form(trade_row, current_pid):
     if pd.isna(default_stop_loss_price) or not default_stop_loss_price:
         default_stop_loss_price = fallback_stop_loss
 
-    with st.container(border=True):
-        e1, e2 = st.columns(2)
-        edit_date = e1.date_input(
-            "交易日期",
-            value=pd.to_datetime(trade_row["date"]).date(),
-            key=f"edit_trade_date_{current_pid}_{trade_id}",
-        )
-        edit_stock = e2.text_input(
-            "股票代號",
-            value=str(trade_row.get("stock_id", "")),
-            key=f"edit_trade_stock_{current_pid}_{trade_id}",
-        )
+    with st.form(
+        key=f"edit_trade_form_{current_pid}_{trade_id}",
+        clear_on_submit=False,
+    ):
+        with st.container(border=True):
+            e1, e2 = st.columns(2)
+            edit_date = e1.date_input(
+                "交易日期",
+                value=pd.to_datetime(trade_row["date"]).date(),
+                key=f"edit_trade_date_{current_pid}_{trade_id}",
+            )
+            edit_stock = e2.text_input(
+                "股票代號",
+                value=str(trade_row.get("stock_id", "")),
+                key=f"edit_trade_stock_{current_pid}_{trade_id}",
+            )
 
-        e3, e4 = st.columns(2)
-        edit_action = e3.selectbox(
-            "動作",
-            action_options,
-            index=action_options.index(current_action),
-            key=f"edit_trade_action_{current_pid}_{trade_id}",
-        )
-        edit_price = e4.number_input(
-            "價格",
-            value=float(trade_row.get("price", 0) or 0),
-            min_value=0.0,
-            step=0.1,
-            key=f"edit_trade_price_{current_pid}_{trade_id}",
-        )
+            e3, e4 = st.columns(2)
+            edit_action = e3.selectbox(
+                "動作",
+                action_options,
+                index=action_options.index(current_action),
+                key=f"edit_trade_action_{current_pid}_{trade_id}",
+            )
+            edit_price = e4.number_input(
+                "價格",
+                value=float(trade_row.get("price", 0) or 0),
+                min_value=0.0,
+                step=0.1,
+                key=f"edit_trade_price_{current_pid}_{trade_id}",
+            )
 
-        e5, e6 = st.columns(2)
-        edit_shares = e5.number_input(
-            "股數",
-            value=int(trade_row.get("shares", 0) or 0),
-            min_value=1,
-            step=100,
-            key=f"edit_trade_shares_{current_pid}_{trade_id}",
-        )
-        edit_disposed = e6.checkbox(
-            "處置股",
-            value=bool(trade_row.get("is_disposed", False)),
-            key=f"edit_trade_disposed_{current_pid}_{trade_id}",
-        )
+            e5, e6 = st.columns(2)
+            edit_shares = e5.number_input(
+                "股數",
+                value=int(trade_row.get("shares", 0) or 0),
+                min_value=1,
+                step=100,
+                key=f"edit_trade_shares_{current_pid}_{trade_id}",
+            )
+            edit_disposed = e6.checkbox(
+                "處置股",
+                value=bool(trade_row.get("is_disposed", False)),
+                key=f"edit_trade_disposed_{current_pid}_{trade_id}",
+            )
 
-        edit_take_profit_price, edit_stop_loss_price = render_trade_risk_plan_inputs(
-            f"edit_trade_{current_pid}_{trade_id}",
-            edit_price,
-            default_take_profit_price=default_take_profit_price,
-            default_stop_loss_price=default_stop_loss_price,
-            trade_action=edit_action,
-        )
+            edit_take_profit_price, edit_stop_loss_price = render_trade_risk_plan_inputs(
+                f"edit_trade_{current_pid}_{trade_id}",
+                edit_price,
+                default_take_profit_price=default_take_profit_price,
+                default_stop_loss_price=default_stop_loss_price,
+                trade_action=edit_action,
+            )
 
-        score_cols = st.columns(3)
-        edit_technical_score = score_cols[0].slider(
-            "技術面評分",
-            1,
-            5,
-            value=get_trade_score_value(trade_row, "technical_score"),
-            key=f"edit_trade_tech_{current_pid}_{trade_id}",
-        )
-        edit_chip_score = score_cols[1].slider(
-            "籌碼面評分",
-            1,
-            5,
-            value=get_trade_score_value(trade_row, "chip_score"),
-            key=f"edit_trade_chip_{current_pid}_{trade_id}",
-        )
-        edit_theme_score = score_cols[2].slider(
-            "題材面評分",
-            1,
-            5,
-            value=get_trade_score_value(trade_row, "theme_score"),
-            key=f"edit_trade_theme_{current_pid}_{trade_id}",
-        )
+            score_cols = st.columns(3)
+            edit_technical_score = score_cols[0].slider(
+                "技術面評分",
+                1,
+                5,
+                value=get_trade_score_value(trade_row, "technical_score"),
+                key=f"edit_trade_tech_{current_pid}_{trade_id}",
+            )
+            edit_chip_score = score_cols[1].slider(
+                "籌碼面評分",
+                1,
+                5,
+                value=get_trade_score_value(trade_row, "chip_score"),
+                key=f"edit_trade_chip_{current_pid}_{trade_id}",
+            )
+            edit_theme_score = score_cols[2].slider(
+                "題材面評分",
+                1,
+                5,
+                value=get_trade_score_value(trade_row, "theme_score"),
+                key=f"edit_trade_theme_{current_pid}_{trade_id}",
+            )
 
-        edit_notes = st.text_area(
-            "交易心得 / 備註",
-            value=strip_trade_risk_metadata(trade_row.get("trading_notes", "")),
-            height=220,
-            key=f"edit_trade_notes_{current_pid}_{trade_id}",
-        )
+            edit_notes = st.text_area(
+                "交易心得 / 備註",
+                value=strip_trade_risk_metadata(trade_row.get("trading_notes", "")),
+                height=220,
+                key=f"edit_trade_notes_{current_pid}_{trade_id}",
+            )
 
-        if st.button(
-            "儲存修改",
-            use_container_width=True,
-            key=f"save_edit_trade_{current_pid}_{trade_id}",
-        ):
-            try:
-                update_trade_record(
-                    current_pid,
-                    trade_id,
-                    edit_date.strftime("%Y-%m-%d"),
-                    edit_stock,
-                    edit_action,
-                    edit_price,
-                    edit_shares,
-                    edit_disposed,
-                    edit_notes,
-                    technical_score=edit_technical_score,
-                    chip_score=edit_chip_score,
-                    theme_score=edit_theme_score,
-                    take_profit_price=edit_take_profit_price,
-                    stop_loss_price=edit_stop_loss_price,
-                )
-                st.success("交易紀錄已更新，後續 NAV/持倉/績效會自動重算。")
-                time.sleep(0.5)
-                st.session_state["editing_trade_id"] = None
-                st.rerun()
-            except ValueError as edit_error:
-                st.error(str(edit_error))
+            save_edit = st.form_submit_button(
+                "儲存修改",
+                use_container_width=True,
+            )
+
+    if save_edit:
+        try:
+            update_trade_record(
+                current_pid,
+                trade_id,
+                edit_date.strftime("%Y-%m-%d"),
+                edit_stock,
+                edit_action,
+                edit_price,
+                edit_shares,
+                edit_disposed,
+                edit_notes,
+                technical_score=edit_technical_score,
+                chip_score=edit_chip_score,
+                theme_score=edit_theme_score,
+                take_profit_price=edit_take_profit_price,
+                stop_loss_price=edit_stop_loss_price,
+            )
+            invalidate_portfolio_runtime_bundle(current_pid)
+            show_ui_toast("交易紀錄已更新")
+            st.session_state["editing_trade_id"] = None
+            st.rerun()
+        except ValueError as edit_error:
+            st.error(str(edit_error))
 
     st.divider()
     confirm_delete = st.checkbox(
@@ -2417,8 +2447,8 @@ def render_trade_edit_form(trade_row, current_pid):
     ):
         try:
             delete_trade_record(current_pid, trade_id)
-            st.success("交易紀錄已刪除，後續 NAV/持倉/績效已標記重算。")
-            time.sleep(0.5)
+            invalidate_portfolio_runtime_bundle(current_pid)
+            show_ui_toast("交易紀錄已刪除")
             st.session_state["editing_trade_id"] = None
             st.rerun()
         except ValueError as delete_error:
@@ -2684,6 +2714,7 @@ from backend import (
     get_macro_journals,
     get_notebook_articles,
     get_db_connection,
+    get_portfolio_net_invested_amount,
     get_portfolio_state,
     get_portfolios,
     get_supabase_client,
@@ -2696,6 +2727,7 @@ from backend import (
     normalize_stock_id,
     get_portfolio_trades_df,
     process_trade_derivation,
+    resolve_stock_id_from_text,
     save_macro_journal,
     sync_twse_market_holidays,
     summarize_closed_stock_trade_cycles,
@@ -2706,6 +2738,140 @@ from backend import (
     delete_market_holiday,
     save_trade_cycle_ai_review,
 )
+
+
+def show_ui_toast(message, icon="✅"):
+    if hasattr(st, "toast"):
+        st.toast(message, icon=icon)
+
+
+def invalidate_portfolio_runtime_bundle(portfolio_id=None):
+    cache_map = st.session_state.get("portfolio_runtime_bundle_cache")
+    if isinstance(cache_map, dict):
+        if portfolio_id is None:
+            cache_map.clear()
+        else:
+            cache_map.pop(int(portfolio_id), None)
+    review_cache_map = st.session_state.get("trade_review_runtime_cache")
+    if isinstance(review_cache_map, dict):
+        if portfolio_id is None:
+            review_cache_map.clear()
+        else:
+            pid_prefix = f"{int(portfolio_id)}|"
+            remove_keys = [
+                cache_key
+                for cache_key in review_cache_map.keys()
+                if str(cache_key).startswith(pid_prefix)
+            ]
+            for cache_key in remove_keys:
+                review_cache_map.pop(cache_key, None)
+    st.session_state["portfolio_runtime_nonce"] = (
+        int(st.session_state.get("portfolio_runtime_nonce", 0) or 0) + 1
+    )
+
+
+def get_portfolio_runtime_bundle(portfolio_id, official_nav_date):
+    cache_map = st.session_state.setdefault("portfolio_runtime_bundle_cache", {})
+    runtime_nonce = int(st.session_state.get("portfolio_runtime_nonce", 0) or 0)
+    today_signature = datetime.now().strftime("%Y-%m-%d")
+    cache_signature = (
+        f"{int(portfolio_id)}|{official_nav_date}|{today_signature}|{runtime_nonce}"
+    )
+    cached_bundle = cache_map.get(int(portfolio_id))
+    if cached_bundle and cached_bundle.get("signature") == cache_signature:
+        return cached_bundle["data"]
+
+    with st.spinner("載入報價與 TWR 計算中..."):
+        auto_process_settlement(portfolio_id)
+        t0_cash, t2_cash = get_portfolio_state(portfolio_id)
+        hist_df, _, current_twr = calculate_twr_and_nav(portfolio_id)
+        holdings_df, _ = get_holdings_detail(portfolio_id)
+
+    bundle = {
+        "t0_cash": t0_cash,
+        "t2_cash": t2_cash,
+        "hist_df": hist_df,
+        "current_twr": current_twr,
+        "holdings_df": holdings_df,
+    }
+    cache_map[int(portfolio_id)] = {"signature": cache_signature, "data": bundle}
+    return bundle
+
+
+@st.cache_data(ttl=300)
+def fetch_trade_review_price_history(stock_id, start_date_str, end_date_str):
+    yf_code = get_full_yf_symbol(stock_id)
+    return yf.download(
+        yf_code,
+        actions=True,
+        auto_adjust=True,
+        start=start_date_str,
+        end=end_date_str,
+        progress=False,
+    )
+
+
+def get_trade_review_runtime_bundle(portfolio_id, stock_id, hist_df):
+    cache_map = st.session_state.setdefault("trade_review_runtime_cache", {})
+    runtime_nonce = int(st.session_state.get("portfolio_runtime_nonce", 0) or 0)
+    hist_signature = "empty"
+    if hist_df is not None and not hist_df.empty:
+        hist_signature = (
+            f"{len(hist_df)}|{hist_df.iloc[-1].get('Date', '')}|"
+            f"{float(pd.to_numeric(hist_df.iloc[-1].get('NAV', 0), errors='coerce') or 0):.4f}"
+        )
+    cache_key = f"{int(portfolio_id)}|{normalize_stock_id(stock_id)}"
+    cache_signature = f"{runtime_nonce}|{hist_signature}"
+    cached_bundle = cache_map.get(cache_key)
+    if cached_bundle and cached_bundle.get("signature") == cache_signature:
+        return cached_bundle["data"]
+
+    trades_df = get_portfolio_trades_df(portfolio_id)
+    if trades_df.empty:
+        bundle = {
+            "trades_df": trades_df,
+            "display_names": {},
+            "filtered_df": pd.DataFrame(),
+            "processed_df": pd.DataFrame(),
+            "trade_cycle_segments": [],
+            "closed_cycle_df": pd.DataFrame(),
+        }
+    else:
+        trades_df = trades_df.copy()
+        trades_df["stock_id"] = trades_df["stock_id"].apply(normalize_stock_id)
+        display_names = get_stock_display_names(
+            trades_df["stock_id"].dropna().unique().tolist()
+        )
+        normalized_stock_id = normalize_stock_id(stock_id)
+        filtered_df = (
+            trades_df[trades_df["stock_id"] == normalized_stock_id].copy()
+            if normalized_stock_id
+            else pd.DataFrame()
+        )
+        processed_df = (
+            calculate_trade_journal(filtered_df) if not filtered_df.empty else pd.DataFrame()
+        )
+        trade_cycle_segments = build_trade_cycle_segments_from_journal(processed_df)
+        closed_cycle_df = (
+            summarize_closed_stock_trade_cycles(
+                portfolio_id,
+                normalized_stock_id,
+                portfolio_hist_df=hist_df,
+            )
+            if normalized_stock_id
+            else pd.DataFrame()
+        )
+        bundle = {
+            "trades_df": trades_df,
+            "display_names": display_names,
+            "filtered_df": filtered_df,
+            "processed_df": processed_df,
+            "trade_cycle_segments": trade_cycle_segments,
+            "closed_cycle_df": closed_cycle_df,
+        }
+
+    cache_map[cache_key] = {"signature": cache_signature, "data": bundle}
+    return bundle
 
 
 # --- UI Configuration & Styling ---
@@ -3378,12 +3544,12 @@ else:
                                         0,
                                         0,
                                         "期初庫存建檔",
-                                    )
+                            )
 
-                            st.success("建立成功！")
+                            invalidate_portfolio_runtime_bundle()
+                            show_ui_toast(f"資金池 {new_name.strip()} 已建立")
                             if "init_portfolio_df" in st.session_state:
                                 del st.session_state["init_portfolio_df"]
-                            time.sleep(1)
                             st.rerun()
                         except sqlite3.IntegrityError:
                             st.error(f"資金池名稱 '{new_name}' 已存在，請換一個名字。")
@@ -3440,8 +3606,8 @@ else:
                 use_container_width=True,
             ):
                 delete_portfolio_and_related_data(current_pid)
-                st.success(f"資金池 {selected_p_name} 及其紀錄已全數刪除！")
-                time.sleep(1.5)
+                invalidate_portfolio_runtime_bundle()
+                show_ui_toast(f"資金池 {selected_p_name} 已刪除")
                 st.rerun()
 
     # --- Top Action Bar ---
@@ -3459,13 +3625,12 @@ else:
     st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
     # --- Main Tabs ---
-    with st.spinner("載入報價與 TWR 計算中..."):
-        auto_process_settlement(current_pid)
-
-        t0_v, t2_v = get_portfolio_state(current_pid)
-
-        hist_df, _, current_twr = calculate_twr_and_nav(current_pid)
-        holdings_df, _ = get_holdings_detail(current_pid)
+    runtime_bundle = get_portfolio_runtime_bundle(current_pid, official_nav_date)
+    t0_v = runtime_bundle["t0_cash"]
+    t2_v = runtime_bundle["t2_cash"]
+    hist_df = runtime_bundle["hist_df"]
+    current_twr = runtime_bundle["current_twr"]
+    holdings_df = runtime_bundle["holdings_df"]
 
     if holdings_df.empty:
         pie_data = pd.DataFrame({"Asset": ["可用現金 (T+0)"], "Value": [t0_v]})
@@ -3491,12 +3656,10 @@ else:
         day_delta_pct = 0.0
 
     if not hist_df.empty:
-        nav_start = float(hist_df.iloc[0]["NAV"])
         nav_latest = float(hist_df.iloc[-1]["NAV"])
+        net_invested_amount = float(get_portfolio_net_invested_amount(current_pid) or 0.0)
         total_delta_pct = float(current_twr)
-        twr_factor = 1 + total_delta_pct / 100
-        perf_base_nav = nav_latest / twr_factor if twr_factor > 0 else nav_start
-        total_delta = nav_latest - perf_base_nav
+        total_delta = nav_latest - net_invested_amount
         latest_drawdown = float(hist_df.iloc[-1].get("Drawdown", 0) or 0)
         max_drawdown = (
             float(hist_df["Drawdown"].min())
@@ -3805,8 +3968,8 @@ else:
                     use_container_width=True,
                 ):
                     synced_count = sync_twse_market_holidays()
-                    st.success(f"已同步 {synced_count} 筆 TWSE 休市資料")
-                    time.sleep(0.3)
+                    invalidate_portfolio_runtime_bundle()
+                    show_ui_toast(f"已同步 {synced_count} 筆 TWSE 休市資料")
                     st.rerun()
 
                 hol_df = get_market_holidays_df()
@@ -3833,6 +3996,8 @@ else:
                         h_reason.strip(),
                         h_settlement_open,
                     )
+                    invalidate_portfolio_runtime_bundle()
+                    show_ui_toast("休市日已新增")
                     st.rerun()
 
                 if not hol_df.empty:
@@ -3844,6 +4009,8 @@ else:
                     )
                     if st.button("刪除", key=f"holiday_del_btn_{current_pid}"):
                         delete_market_holiday(del_target)
+                        invalidate_portfolio_runtime_bundle()
+                        show_ui_toast("休市日已刪除")
                         st.rerun()
                     st.dataframe(
                         hol_df.tail(5),
@@ -3930,8 +4097,8 @@ else:
                             set_manual_price_override(sid, float(override_val))
                         else:
                             delete_manual_price_override(sid)
-                    st.success("已更新手動現價覆蓋設定")
-                    time.sleep(0.3)
+                    invalidate_portfolio_runtime_bundle(current_pid)
+                    show_ui_toast("已更新手動現價覆蓋設定")
                     st.rerun()
 
             holdings_num = len(holdings_df)
@@ -4147,8 +4314,8 @@ else:
                             )
                             changed_count += 1
                     if changed_count:
-                        st.success(f"已更新 {changed_count} 檔持倉的停利 / 停損設定。")
-                        time.sleep(0.4)
+                        invalidate_portfolio_runtime_bundle(current_pid)
+                        show_ui_toast(f"已更新 {changed_count} 檔持倉的停利 / 停損設定")
                         st.rerun()
                     else:
                         st.info("目前沒有偵測到停利 / 停損設定變更。")
@@ -4532,14 +4699,17 @@ else:
 
     with tab2:
         st.header("交易回顧與操作日誌 (Timeline & PnL)")
-        t_df = get_portfolio_trades_df(current_pid)
+        base_review_bundle = get_trade_review_runtime_bundle(current_pid, "", hist_df)
+        t_df = base_review_bundle["trades_df"]
 
         if t_df.empty:
             st.warning("尚無交易紀錄。")
         else:
             t_df["stock_id"] = t_df["stock_id"].apply(normalize_stock_id)
             all_review_stocks = t_df["stock_id"].dropna().unique().tolist()
-            display_names = get_stock_display_names(all_review_stocks)
+            display_names = base_review_bundle.get("display_names", {}) or get_stock_display_names(
+                all_review_stocks
+            )
 
             t2_tab1, t2_tab2 = st.tabs(
                 ["🎯 單一標的損益追蹤", "📝 所有操作日誌與復盤"]
@@ -4551,9 +4721,14 @@ else:
                 sel_disp_name = st.selectbox("選擇回顧標的", list(stock_options.keys()))
                 sel_stock = stock_options[sel_disp_name]
 
-                filtered = t_df[t_df["stock_id"] == sel_stock].copy()
-                processed_df = calculate_trade_journal(filtered)
-                trade_cycle_segments = build_trade_cycle_segments_from_journal(processed_df)
+                selected_review_bundle = get_trade_review_runtime_bundle(
+                    current_pid, sel_stock, hist_df
+                )
+                filtered = selected_review_bundle["filtered_df"].copy()
+                processed_df = selected_review_bundle["processed_df"].copy()
+                trade_cycle_segments = list(
+                    selected_review_bundle.get("trade_cycle_segments") or []
+                )
 
                 if trade_cycle_segments:
                     cycle_labels = [
@@ -4620,11 +4795,7 @@ else:
                             card_class="holdings-stat-card",
                         )
 
-                closed_cycle_df = summarize_closed_stock_trade_cycles(
-                    current_pid,
-                    sel_stock,
-                    portfolio_hist_df=hist_df,
-                )
+                closed_cycle_df = selected_review_bundle["closed_cycle_df"].copy()
                 selected_cycle_no = (
                     int(selected_cycle_segment["cycle_no"])
                     if selected_cycle_segment is not None
@@ -4663,21 +4834,15 @@ else:
                     else pd.to_datetime(filtered["date"].max())
                 )
                 start_date = cycle_start_date - timedelta(days=35)
-                # 使用剛才建立的 helper 獲取正確的全名 (避免 .TW/.TWO 混淆)
-                yf_code = get_full_yf_symbol(sel_stock)
-                
                 # 結束日期設為明天，確保涵蓋最新交易日
                 end_date_str = (
                     max(cycle_end_date, pd.to_datetime(datetime.now())) + timedelta(days=1)
                 ).strftime("%Y-%m-%d")
-                
-                price_hist = yf.download(
-                    yf_code,
-                    actions=True,
-                    auto_adjust=True,  # 使用自動復權後的價格，圖表才不會因為除息而有缺口或跳空
-                    start=start_date.strftime("%Y-%m-%d"),
-                    end=end_date_str,
-                    progress=False,
+
+                price_hist = fetch_trade_review_price_history(
+                    sel_stock,
+                    start_date.strftime("%Y-%m-%d"),
+                    end_date_str,
                 )
 
                 # Check current unrealized PnL for active stock
@@ -4829,7 +4994,7 @@ else:
             with t2_tab2:
                 st.markdown("### 歷史所有交易流水帳")
                 st.caption(
-                    "依日期由新到舊排列，點開每筆交易可閱讀完整心得、三面向評分，並直接修改原始紀錄。"
+                    "依日期由最早到最近排列，點開每筆交易可閱讀完整心得、三面向評分，並直接修改原始紀錄。"
                 )
                 view_log_df = t_df.copy()
                 view_log_df["display_stock_name"] = view_log_df["stock_id"].apply(
@@ -4846,7 +5011,7 @@ else:
                     }.get(x, x)
                 )
                 view_log_df.sort_values(
-                    ["date", "id"], ascending=[False, False], inplace=True
+                    ["date", "id"], ascending=[True, True], inplace=True
                 )
                 selected_edit_trade_row = None
 
@@ -4897,6 +5062,6 @@ else:
                 execute_cashflow(
                     current_pid, cf_date.strftime("%Y-%m-%d"), cf_type, cf_amount
                 )
-                st.success(f"確認已寫入: {cf_type} - {cf_amount}")
-                time.sleep(1)
+                invalidate_portfolio_runtime_bundle(current_pid)
+                show_ui_toast(f"已寫入資金流：{cf_type} ${cf_amount:,.0f}")
                 st.rerun()
