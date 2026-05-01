@@ -47,6 +47,26 @@ def test_core_market_holidays_include_2026_labor_day():
     )
 
 
+def test_cleanup_nav_snapshots_on_market_holidays(monkeypatch):
+    deleted_calls = []
+
+    monkeypatch.setattr(
+        backend.daily_nav_snapshot_repository,
+        "delete_date_for_portfolios",
+        lambda date_str, portfolio_ids=None: deleted_calls.append(
+            (date_str, portfolio_ids)
+        ),
+    )
+
+    result = backend.cleanup_nav_snapshots_on_market_holidays(
+        portfolio_ids=[1, "2"],
+        holiday_dates=["2026-05-01"],
+    )
+
+    assert result == {"checked": 1, "deleted_dates": ["2026-05-01"]}
+    assert deleted_calls == [("2026-05-01", [1, 2])]
+
+
 def test_ensure_portfolios_official_nav_synced_rebuilds_only_stale_or_dirty(monkeypatch):
     monkeypatch.setattr(backend, "ensure_db_schema", lambda: None)
     monkeypatch.setattr(
@@ -54,6 +74,7 @@ def test_ensure_portfolios_official_nav_synced_rebuilds_only_stale_or_dirty(monk
         "get_latest_official_tw_trading_date",
         lambda date_value=None, holiday_dates=None: "2026-04-20",
     )
+    monkeypatch.setattr(backend, "get_market_holiday_dates", lambda: set())
 
     snapshot_map = {
         1: pd.DataFrame([{"Date": "2026-04-18"}]),
@@ -87,6 +108,7 @@ def test_ensure_portfolios_official_nav_synced_rebuilds_only_stale_or_dirty(monk
         "checked": 3,
         "synced": 2,
         "skipped": 1,
+        "holiday_deleted_dates": [],
     }
 
 

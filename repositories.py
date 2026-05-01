@@ -559,6 +559,20 @@ class DailyNavSnapshotRepository:
             .execute()
         )
 
+    def delete_date_for_portfolios(self, date_str, portfolio_ids=None):
+        def _delete():
+            query = (
+                get_supabase_client()
+                .table("DailyNavSnapshots")
+                .delete()
+                .eq("date", str(date_str))
+            )
+            if portfolio_ids:
+                query = query.in_("portfolio_id", [int(pid) for pid in portfolio_ids])
+            return query.execute()
+
+        _run_with_retry(_delete)
+
     def delete_portfolio_snapshots(self, portfolio_id):
         _run_with_retry(
             lambda: get_supabase_client()

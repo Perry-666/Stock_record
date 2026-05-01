@@ -529,9 +529,46 @@ def ensure_core_market_holidays():
         return 0
 
 
+def cleanup_nav_snapshots_on_market_holidays(portfolio_ids=None, holiday_dates=None):
+    holidays = set(str(d) for d in (holiday_dates or []))
+    if not holidays:
+        holidays = get_market_holiday_dates()
+    if not holidays:
+        return {"checked": 0, "deleted_dates": []}
+
+    normalized_ids = []
+    if portfolio_ids:
+        for pid in portfolio_ids:
+            try:
+                normalized_ids.append(int(pid))
+            except Exception:
+                continue
+        normalized_ids = list(dict.fromkeys(normalized_ids))
+
+    deleted_dates = []
+    for holiday_date in sorted(holidays):
+        if pd.isna(pd.to_datetime(holiday_date, errors="coerce")):
+            continue
+        daily_nav_snapshot_repository.delete_date_for_portfolios(
+            holiday_date,
+            normalized_ids or None,
+        )
+        deleted_dates.append(holiday_date)
+
+    if deleted_dates:
+        try:
+            get_daily_nav_snapshots_df.clear()
+        except Exception:
+            pass
+        invalidate_runtime_data_caches()
+
+    return {"checked": len(holidays), "deleted_dates": deleted_dates}
+
+
 def upsert_market_holiday(date_str, reason="", is_settlement_open=False):
     market_holiday_repository.upsert_holiday(date_str, reason, is_settlement_open)
     clear_market_holiday_caches()
+    cleanup_nav_snapshots_on_market_holidays(holiday_dates=[str(date_str)])
     invalidate_runtime_data_caches()
 
 
@@ -588,6 +625,10 @@ def ensure_portfolios_official_nav_synced(portfolio_ids, target_date=None):
     if not normalized_ids:
         return {"official_date": None, "checked": 0, "synced": 0, "skipped": 0}
 
+    holiday_cleanup = cleanup_nav_snapshots_on_market_holidays(
+        normalized_ids,
+        holiday_dates=get_market_holiday_dates(),
+    )
     official_date = str(
         target_date or get_latest_official_tw_trading_date()
     )
@@ -618,6 +659,7 @@ def ensure_portfolios_official_nav_synced(portfolio_ids, target_date=None):
         "checked": len(normalized_ids),
         "synced": synced,
         "skipped": skipped,
+        "holiday_deleted_dates": holiday_cleanup.get("deleted_dates", []),
     }
 
 
