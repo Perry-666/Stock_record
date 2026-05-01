@@ -2,7 +2,6 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
-import time
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
@@ -2555,8 +2554,7 @@ def render_daily_macro_journal_tab():
                     f"### 🔭 最近觀察標的與原因\n{q3}"
                 )
                 save_macro_journal(j_date.strftime("%Y-%m-%d"), combined_content)
-                st.success("儲存成功！筆記已發布！")
-                time.sleep(0.5)
+                show_ui_toast("筆記已發布")
                 st.rerun()
 
     st.markdown("---")
@@ -2579,14 +2577,12 @@ def render_daily_macro_journal_tab():
             action_cols = st.columns([1, 1, 4])
             if action_cols[0].button("儲存修改", key=f"save_macro_{note_date}"):
                 save_macro_journal(note_date, current_text)
-                st.success(f"{note_date} 筆記已更新")
-                time.sleep(0.3)
+                show_ui_toast(f"{note_date} 筆記已更新")
                 st.rerun()
             if action_cols[1].button("刪除筆記", key=f"delete_macro_{note_date}"):
                 delete_macro_journal(note_date)
                 st.session_state.pop(edit_key, None)
-                st.success(f"{note_date} 筆記已刪除")
-                time.sleep(0.3)
+                show_ui_toast(f"{note_date} 筆記已刪除")
                 st.rerun()
 
 
@@ -2603,8 +2599,7 @@ def render_article_notebook_tab(note_type, section_title, new_button_label, key_
         )
         if new_article_id:
             st.session_state[f"{key_prefix}_selected_article_id"] = int(new_article_id)
-        st.success("已建立新筆記")
-        time.sleep(0.3)
+        show_ui_toast("已建立新筆記")
         st.rerun()
 
     if articles_df.empty:
@@ -2675,8 +2670,7 @@ def render_article_notebook_tab(note_type, section_title, new_button_label, key_
                 edit_date.strftime("%Y-%m-%d"),
                 selected_row.get("update_log_json", "[]"),
             )
-            st.success("筆記已更新")
-            time.sleep(0.3)
+            show_ui_toast("筆記已更新")
             st.rerun()
         except ValueError as note_error:
             st.error(str(note_error))
@@ -2685,8 +2679,7 @@ def render_article_notebook_tab(note_type, section_title, new_button_label, key_
         delete_notebook_article(selected_article_id)
         st.session_state.pop(content_key, None)
         st.session_state.pop(f"{key_prefix}_title_{selected_article_id}", None)
-        st.success("筆記已刪除")
-        time.sleep(0.3)
+        show_ui_toast("筆記已刪除")
         st.rerun()
 
 
@@ -3373,44 +3366,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-def get_app_password_secret():
-    try:
-        password_from_secrets = st.secrets.get("APP_PASSWORD")
-    except Exception:
-        password_from_secrets = None
-    return password_from_secrets or os.environ.get("APP_PASSWORD")
-
-
-def require_app_password():
-    if st.session_state.get("app_password_verified"):
-        return
-
-    expected_password = get_app_password_secret()
-    st.markdown("### 進入多帳戶波段交易與 AI 記帳系統")
-
-    if not expected_password:
-        st.error("尚未設定 APP_PASSWORD，請先在 Streamlit Secrets 或本機 .env 裡補上。")
-        st.stop()
-
-    input_password = st.text_input(
-        "請輸入系統密碼",
-        type="password",
-        key="app_password_input",
-        placeholder="輸入通關密碼後才會顯示交易系統",
-    )
-
-    if input_password == expected_password:
-        st.session_state["app_password_verified"] = True
-        st.rerun()
-
-    if input_password:
-        st.error("密碼錯誤，請再試一次。")
-
-    st.stop()
-
-
-require_app_password()
 
 st.title("📈 多帳戶波段交易與 AI 記帳系統")
 

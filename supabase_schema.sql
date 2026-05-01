@@ -150,6 +150,7 @@ on conflict (name) do nothing;
 
 insert into public."MarketHolidays" (date, reason, is_settlement_open)
 values
-  ('2026-04-03', '連假休市', false),
-  ('2026-04-06', '連假休市', false)
+  ('2026-04-03', '兒童節及民族掃墓節連假', false),
+  ('2026-04-06', '兒童節及民族掃墓節補假', false),
+  ('2026-05-01', '勞動節', false)
 on conflict (date) do nothing;

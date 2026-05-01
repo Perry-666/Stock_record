@@ -27,6 +27,25 @@ def test_latest_official_trading_date_before_and_after_close(monkeypatch):
     )
     assert backend.get_latest_official_tw_trading_date() == "2026-04-08"
 
+    monkeypatch.setattr(
+        backend,
+        "get_market_holiday_dates",
+        lambda: {"2026-05-01"},
+    )
+    monkeypatch.setattr(
+        backend,
+        "get_tw_now",
+        lambda: pd.Timestamp("2026-05-01 23:00:00").to_pydatetime(),
+    )
+    assert backend.get_latest_official_tw_trading_date() == "2026-04-30"
+
+
+def test_core_market_holidays_include_2026_labor_day():
+    assert any(
+        row["date"] == "2026-05-01" and not row["is_settlement_open"]
+        for row in backend.CORE_TW_MARKET_HOLIDAYS
+    )
+
 
 def test_ensure_portfolios_official_nav_synced_rebuilds_only_stale_or_dirty(monkeypatch):
     monkeypatch.setattr(backend, "ensure_db_schema", lambda: None)

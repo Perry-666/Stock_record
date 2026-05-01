@@ -41,6 +41,12 @@ TW_MARKET_CLOSE_MINUTE = 30
 TW_MARKET_FINALIZATION_DELAY_MINUTES = 30
 _SCHEMA_ENSURED_IN_PROCESS = False
 _HOLIDAY_SYNCED_DATE_IN_PROCESS = None
+_CORE_HOLIDAYS_SEEDED_IN_PROCESS = False
+CORE_TW_MARKET_HOLIDAYS = [
+    {"date": "2026-04-03", "reason": "兒童節及民族掃墓節連假", "is_settlement_open": False},
+    {"date": "2026-04-06", "reason": "兒童節及民族掃墓節補假", "is_settlement_open": False},
+    {"date": "2026-05-01", "reason": "勞動節", "is_settlement_open": False},
+]
 
 
 def normalize_stock_id(s):
@@ -58,6 +64,7 @@ def get_tw_now():
 def ensure_db_schema():
     global _SCHEMA_ENSURED_IN_PROCESS, _HOLIDAY_SYNCED_DATE_IN_PROCESS
     if _SCHEMA_ENSURED_IN_PROCESS:
+        ensure_core_market_holidays()
         today_key = datetime.now().strftime("%Y-%m-%d")
         if _HOLIDAY_SYNCED_DATE_IN_PROCESS != today_key:
             sync_twse_market_holidays()
@@ -240,8 +247,12 @@ def ensure_db_schema():
             VALUES (?, ?, ?)
             """,
             [
-                ("2026-04-03", "連假休市", 0),
-                ("2026-04-06", "連假休市", 0),
+                (
+                    row["date"],
+                    row["reason"],
+                    int(bool(row["is_settlement_open"])),
+                )
+                for row in CORE_TW_MARKET_HOLIDAYS
             ],
         )
         # 舊版預設帳戶只有 Portfolios 現金，沒有 CashFlows 紀錄，會導致歷史 NAV 從 0 開始。
@@ -265,12 +276,14 @@ def ensure_db_schema():
         conn.close()
 
     _SCHEMA_ENSURED_IN_PROCESS = True
+    ensure_core_market_holidays()
     today_key = datetime.now().strftime("%Y-%m-%d")
     if _HOLIDAY_SYNCED_DATE_IN_PROCESS != today_key:
         sync_twse_market_holidays()
         _HOLIDAY_SYNCED_DATE_IN_PROCESS = today_key
 
 
+@st.cache_data(ttl=30)
 def get_portfolios():
     df = portfolio_repository.list_portfolios()
     if not df.empty and "id" in df.columns:
@@ -278,6 +291,7 @@ def get_portfolios():
     return df
 
 
+@st.cache_data(ttl=30)
 def get_portfolio_state(portfolio_id):
     state = portfolio_repository.get_state(portfolio_id)
     return state["t0_cash"], state["t2_cash"]
@@ -336,6 +350,7 @@ def delete_portfolio_and_related_data(portfolio_id):
     invalidate_runtime_data_caches()
 
 
+@st.cache_data(ttl=30)
 def get_portfolio_trades_df(portfolio_id):
     trades_df = trade_repository.list_trades(portfolio_id)
     if trades_df.empty:
@@ -365,6 +380,7 @@ def get_portfolio_trades_df(portfolio_id):
     return trades_df
 
 
+@st.cache_data(ttl=30)
 def get_inventory(portfolio_id, stock_id=None):
     trades_df = trade_repository.list_trades(
         portfolio_id, columns="stock_id,action,shares"
@@ -397,6 +413,7 @@ def get_inventory(portfolio_id, stock_id=None):
     )
 
 
+@st.cache_data(ttl=30)
 def get_inventory_as_of_date(portfolio_id, stock_id=None, as_of_date=None):
     trades_df = trade_repository.list_trades(
         portfolio_id, columns="date,stock_id,action,shares,id"
@@ -461,6 +478,7 @@ def _normalize_ai_trade_date(raw_value):
     return parsed.strftime("%Y-%m-%d")
 
 
+@st.cache_data(ttl=3600)
 def get_market_holiday_dates():
     holiday_df = market_holiday_repository.list_holidays()
     if holiday_df.empty:
@@ -468,6 +486,7 @@ def get_market_holiday_dates():
     return set(holiday_df["date"].astype(str).tolist())
 
 
+@st.cache_data(ttl=3600)
 def get_settlement_blocked_dates():
     holiday_df = market_holiday_repository.list_holidays()
     if holiday_df.empty:
@@ -476,6 +495,7 @@ def get_settlement_blocked_dates():
     return set(holiday_df.loc[~holiday_df["is_settlement_open"], "date"].astype(str).tolist())
 
 
+@st.cache_data(ttl=3600)
 def get_market_holidays_df():
     df = market_holiday_repository.list_holidays()
     if not df.empty:
@@ -484,12 +504,41 @@ def get_market_holidays_df():
     return df
 
 
+def clear_market_holiday_caches():
+    for cache_func in [
+        get_market_holiday_dates,
+        get_settlement_blocked_dates,
+        get_market_holidays_df,
+    ]:
+        try:
+            cache_func.clear()
+        except Exception:
+            pass
+
+
+def ensure_core_market_holidays():
+    global _CORE_HOLIDAYS_SEEDED_IN_PROCESS
+    if _CORE_HOLIDAYS_SEEDED_IN_PROCESS:
+        return 0
+    try:
+        written = market_holiday_repository.upsert_many(CORE_TW_MARKET_HOLIDAYS)
+        clear_market_holiday_caches()
+        _CORE_HOLIDAYS_SEEDED_IN_PROCESS = True
+        return written
+    except Exception:
+        return 0
+
+
 def upsert_market_holiday(date_str, reason="", is_settlement_open=False):
     market_holiday_repository.upsert_holiday(date_str, reason, is_settlement_open)
+    clear_market_holiday_caches()
+    invalidate_runtime_data_caches()
 
 
 def delete_market_holiday(date_str):
     market_holiday_repository.delete_holiday(date_str)
+    clear_market_holiday_caches()
+    invalidate_runtime_data_caches()
 
 
 def is_tw_market_open(date_value, holiday_dates=None):
@@ -591,7 +640,7 @@ def _is_twse_trading_marker(name_text, desc_text):
     return ("開始交易" in merged_text) or ("最後交易" in merged_text)
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner=False)
 def fetch_twse_market_holiday_rows(target_year):
     query_year = int(target_year) - 1911
     response = _session.get(
@@ -652,11 +701,12 @@ def fetch_twse_market_holiday_rows(target_year):
 
 
 def sync_twse_market_holidays(target_years=None):
+    global _CORE_HOLIDAYS_SEEDED_IN_PROCESS
     if target_years is None:
         current_year = datetime.now().year
         target_years = [current_year - 1, current_year, current_year + 1]
 
-    all_rows = []
+    all_rows = list(CORE_TW_MARKET_HOLIDAYS)
     for year_value in dict.fromkeys(int(y) for y in target_years):
         try:
             all_rows.extend(fetch_twse_market_holiday_rows(year_value))
@@ -666,7 +716,12 @@ def sync_twse_market_holidays(target_years=None):
     if not all_rows:
         return 0
 
-    return market_holiday_repository.upsert_many(all_rows)
+    unique_rows = {row["date"]: row for row in all_rows if row.get("date")}
+    written = market_holiday_repository.upsert_many(list(unique_rows.values()))
+    _CORE_HOLIDAYS_SEEDED_IN_PROCESS = True
+    clear_market_holiday_caches()
+    invalidate_runtime_data_caches()
+    return written
 
 
 def _signed_trade_amount(action, amount):
@@ -725,6 +780,10 @@ def mark_nav_snapshots_dirty(portfolio_id, from_date):
         dirty_str = min(current_dirty, dirty_str)
     daily_nav_snapshot_repository.delete_from_date(portfolio_id, dirty_str)
     portfolio_repository.set_nav_dirty_from_date(portfolio_id, dirty_str)
+    try:
+        get_daily_nav_snapshots_df.clear()
+    except Exception:
+        pass
 
 
 def _normalize_optional_price_target(target_price):
@@ -1386,6 +1445,15 @@ def get_manual_price_overrides(stock_ids=None):
 
 def invalidate_runtime_data_caches():
     cache_funcs = [
+        get_portfolios,
+        get_portfolio_state,
+        get_portfolio_trades_df,
+        get_inventory,
+        get_inventory_as_of_date,
+        get_daily_nav_snapshots_df,
+        get_market_holiday_dates,
+        get_settlement_blocked_dates,
+        get_market_holidays_df,
         fetch_finmind_last_close,
         fetch_finmind_price_history,
         fetch_yfinance_history,
@@ -1823,6 +1891,7 @@ def get_price_snapshot_min_latest_date(stock_ids):
     return price_snapshot_repository.get_min_latest_date(normalized_ids)
 
 
+@st.cache_data(ttl=30)
 def get_daily_nav_snapshots_df(portfolio_id):
     df = daily_nav_snapshot_repository.list_snapshots(portfolio_id)
     if not df.empty:
@@ -2032,6 +2101,10 @@ def upsert_daily_nav_snapshots(portfolio_id, hist_df):
     written = daily_nav_snapshot_repository.upsert_snapshots(portfolio_id, records)
     if written:
         portfolio_repository.set_nav_dirty_from_date(portfolio_id, None)
+        try:
+            get_daily_nav_snapshots_df.clear()
+        except Exception:
+            pass
     return written
 
 
