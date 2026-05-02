@@ -1982,6 +1982,7 @@ def pop_ai_parsed_trade_at(remove_idx):
         trades.pop(int(remove_idx))
     st.session_state["parsed_trade_idx"] = min(int(remove_idx), max(len(trades) - 1, 0))
     set_ai_parsed_trade_group(trades)
+    return len(trades)
 
 
 def render_trade_entry_panel(current_pid):
@@ -2171,28 +2172,31 @@ def render_trade_entry_panel(current_pid):
 
             if ai_save:
                 try:
-                    execute_trade(
-                        current_pid,
-                        t_date.strftime("%Y-%m-%d"),
-                        t_stock,
-                        t_action,
-                        t_price,
-                        t_shares,
-                        is_disposed,
-                        0,
-                        0,
-                        0,
-                        0,
-                        t_notes,
-                        technical_score=t_tech_score,
-                        chip_score=t_chip_score,
-                        theme_score=t_theme_score,
-                        take_profit_price=t_take_profit_price,
-                        stop_loss_price=t_stop_loss_price,
-                    )
-                    invalidate_portfolio_runtime_bundle(current_pid)
+                    with st.spinner("寫入交易紀錄中..."):
+                        execute_trade(
+                            current_pid,
+                            t_date.strftime("%Y-%m-%d"),
+                            t_stock,
+                            t_action,
+                            t_price,
+                            t_shares,
+                            is_disposed,
+                            0,
+                            0,
+                            0,
+                            0,
+                            t_notes,
+                            technical_score=t_tech_score,
+                            chip_score=t_chip_score,
+                            theme_score=t_theme_score,
+                            take_profit_price=t_take_profit_price,
+                            stop_loss_price=t_stop_loss_price,
+                        )
+                    mark_portfolio_runtime_refresh_needed(current_pid)
                     show_ui_toast(f"{t_stock} 已寫入交易紀錄")
-                    pop_ai_parsed_trade_at(idx)
+                    remaining_trades = pop_ai_parsed_trade_at(idx)
+                    if remaining_trades == 0:
+                        st.session_state["show_trade_entry_dialog"] = False
                     st.rerun()
                 except ValueError as trade_error:
                     st.error(str(trade_error))
@@ -2265,26 +2269,27 @@ def render_trade_entry_panel(current_pid):
         if manual_save:
             if m_stock:
                 try:
-                    execute_trade(
-                        current_pid,
-                        m_date.strftime("%Y-%m-%d"),
-                        m_stock,
-                        m_action,
-                        m_price,
-                        m_shares,
-                        m_disposed,
-                        0,
-                        0,
-                        0,
-                        0,
-                        m_notes,
-                        technical_score=m_tech_score,
-                        chip_score=m_chip_score,
-                        theme_score=m_theme_score,
-                        take_profit_price=m_take_profit_price,
-                        stop_loss_price=m_stop_loss_price,
-                    )
-                    invalidate_portfolio_runtime_bundle(current_pid)
+                    with st.spinner("寫入交易紀錄中..."):
+                        execute_trade(
+                            current_pid,
+                            m_date.strftime("%Y-%m-%d"),
+                            m_stock,
+                            m_action,
+                            m_price,
+                            m_shares,
+                            m_disposed,
+                            0,
+                            0,
+                            0,
+                            0,
+                            m_notes,
+                            technical_score=m_tech_score,
+                            chip_score=m_chip_score,
+                            theme_score=m_theme_score,
+                            take_profit_price=m_take_profit_price,
+                            stop_loss_price=m_stop_loss_price,
+                        )
+                    mark_portfolio_runtime_refresh_needed(current_pid)
                     show_ui_toast(f"{m_stock} 已手動歸檔")
                     st.session_state["manual_trade_reset_pending"] = True
                     st.session_state["show_trade_entry_dialog"] = False
@@ -2744,6 +2749,13 @@ def invalidate_portfolio_runtime_bundle(portfolio_id=None):
             cache_map.clear()
         else:
             cache_map.pop(int(portfolio_id), None)
+    clear_trade_review_runtime_cache(portfolio_id)
+    st.session_state["portfolio_runtime_nonce"] = (
+        int(st.session_state.get("portfolio_runtime_nonce", 0) or 0) + 1
+    )
+
+
+def clear_trade_review_runtime_cache(portfolio_id=None):
     review_cache_map = st.session_state.get("trade_review_runtime_cache")
     if isinstance(review_cache_map, dict):
         if portfolio_id is None:
@@ -2757,9 +2769,28 @@ def invalidate_portfolio_runtime_bundle(portfolio_id=None):
             ]
             for cache_key in remove_keys:
                 review_cache_map.pop(cache_key, None)
-    st.session_state["portfolio_runtime_nonce"] = (
-        int(st.session_state.get("portfolio_runtime_nonce", 0) or 0) + 1
+
+
+def mark_portfolio_runtime_refresh_needed(portfolio_id, reason="交易資料已更新"):
+    refresh_map = st.session_state.setdefault("portfolio_runtime_refresh_needed", {})
+    refresh_map[int(portfolio_id)] = reason
+    clear_trade_review_runtime_cache(portfolio_id)
+
+
+def render_portfolio_refresh_notice(portfolio_id):
+    refresh_map = st.session_state.get("portfolio_runtime_refresh_needed", {})
+    reason = refresh_map.get(int(portfolio_id)) if isinstance(refresh_map, dict) else None
+    if not reason:
+        return
+
+    notice_col, button_col = st.columns([4, 1])
+    notice_col.info(
+        f"{reason}。交易已存入資料庫；為了讓新增/編輯流程更順，儀表板與 NAV 重算先暫停，點右側按鈕再更新。"
     )
+    if button_col.button("立即更新資料", use_container_width=True, key=f"refresh_runtime_{portfolio_id}"):
+        refresh_map.pop(int(portfolio_id), None)
+        invalidate_portfolio_runtime_bundle(portfolio_id)
+        st.rerun()
 
 
 def get_portfolio_runtime_bundle(portfolio_id, official_nav_date):
@@ -2864,6 +2895,339 @@ def get_trade_review_runtime_bundle(portfolio_id, stock_id, hist_df):
 
     cache_map[cache_key] = {"signature": cache_signature, "data": bundle}
     return bundle
+
+
+def build_closed_trade_analytics_from_trades(trades_df, display_names=None):
+    if trades_df is None or trades_df.empty:
+        return pd.DataFrame()
+
+    display_names = display_names or {}
+    work_df = trades_df.copy()
+    work_df["stock_id"] = work_df["stock_id"].apply(normalize_stock_id)
+    work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
+    work_df["id"] = pd.to_numeric(work_df.get("id"), errors="coerce").fillna(0)
+    work_df = work_df.dropna(subset=["date", "stock_id"]).sort_values(
+        ["stock_id", "date", "id"],
+        kind="stable",
+    )
+    if work_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for stock_id, stock_df in work_df.groupby("stock_id", sort=False):
+        journal_df = calculate_trade_journal(stock_df.copy())
+        if journal_df.empty:
+            continue
+
+        cycle_rows = []
+        cycle_no = 0
+        running_shares = 0
+        for _, journal_row in journal_df.iterrows():
+            action = str(journal_row.get("action", "")).strip()
+            prev_shares = running_shares
+            current_shares = int(journal_row.get("accum_shares", 0) or 0)
+            if prev_shares <= 0 and action in ["Buy", "Setup", "Add"]:
+                cycle_rows = []
+                cycle_no += 1
+
+            cycle_rows.append(dict(journal_row))
+            running_shares = current_shares
+            if action != "Close" or running_shares > 0 or not cycle_rows:
+                continue
+
+            cycle_df = pd.DataFrame(cycle_rows).copy()
+            entry_rows = cycle_df[cycle_df["action"].isin(["Buy", "Add", "Setup"])].copy()
+            exit_rows = cycle_df[cycle_df["action"].isin(["Reduce", "Close"])].copy()
+            entry_amount = (
+                float((entry_rows["price"] * entry_rows["shares"]).sum())
+                if not entry_rows.empty
+                else 0.0
+            )
+            exit_amount = (
+                float((exit_rows["price"] * exit_rows["shares"]).sum())
+                if not exit_rows.empty
+                else 0.0
+            )
+            total_dividends = float(
+                cycle_df.loc[cycle_df["action"] == "Dividend", "realized_pnl"].sum()
+            )
+            first_cum_before = float(cycle_df.iloc[0].get("cum_pnl", 0) or 0) - float(
+                cycle_df.iloc[0].get("realized_pnl", 0) or 0
+            )
+            total_pnl = float(cycle_df.iloc[-1].get("cum_pnl", 0) or 0) - first_cum_before
+            return_pct = total_pnl / entry_amount * 100 if entry_amount > 0 else 0.0
+            cycle_start = pd.to_datetime(cycle_df.iloc[0]["date"], errors="coerce")
+            cycle_end = pd.to_datetime(cycle_df.iloc[-1]["date"], errors="coerce")
+            holding_days = (
+                max(1, int((cycle_end - cycle_start).days) + 1)
+                if pd.notna(cycle_start) and pd.notna(cycle_end)
+                else 1
+            )
+
+            score_means = {}
+            for score_col in ["technical_score", "chip_score", "theme_score"]:
+                if score_col in cycle_df.columns:
+                    score_series = pd.to_numeric(cycle_df[score_col], errors="coerce").dropna()
+                else:
+                    score_series = pd.Series(dtype=float)
+                score_means[score_col] = (
+                    float(score_series.mean()) if not score_series.empty else np.nan
+                )
+            all_score_values = [
+                score
+                for score in score_means.values()
+                if pd.notna(pd.to_numeric(score, errors="coerce"))
+            ]
+
+            rows.append(
+                {
+                    "stock_id": stock_id,
+                    "標的": display_names.get(stock_id, stock_id),
+                    "輪次": cycle_no,
+                    "進場日": cycle_start.strftime("%Y-%m-%d") if pd.notna(cycle_start) else "-",
+                    "出場日": cycle_end.strftime("%Y-%m-%d") if pd.notna(cycle_end) else "-",
+                    "持有天數": holding_days,
+                    "投入資金": entry_amount,
+                    "出場回收": exit_amount + total_dividends,
+                    "結算損益": total_pnl,
+                    "報酬率 (%)": return_pct,
+                    "平均技術評分": score_means["technical_score"],
+                    "平均籌碼評分": score_means["chip_score"],
+                    "平均產業評分": score_means["theme_score"],
+                    "平均總評分": float(np.mean(all_score_values)) if all_score_values else np.nan,
+                }
+            )
+            cycle_rows = []
+
+    if not rows:
+        return pd.DataFrame()
+    result_df = pd.DataFrame(rows)
+    return result_df.sort_values(["出場日", "標的", "輪次"], ascending=[False, True, False])
+
+
+def render_closed_trade_analytics_panel(trades_df, display_names):
+    st.markdown("### 已完成交易分析")
+    st.caption("資料直接來自 Supabase 交易流水帳，僅統計已 Close 的完整交易輪次。")
+
+    analytics_df = build_closed_trade_analytics_from_trades(trades_df, display_names)
+    if analytics_df.empty:
+        st.info("目前還沒有已完成且已 Close 的交易輪次，等有結案交易後這裡會自動產生統計。")
+        return
+
+    pnl_series = pd.to_numeric(analytics_df["結算損益"], errors="coerce").fillna(0.0)
+    return_series = pd.to_numeric(analytics_df["報酬率 (%)"], errors="coerce").fillna(0.0)
+    winners = pnl_series[pnl_series > 0]
+    losers = pnl_series[pnl_series < 0]
+    total_count = len(pnl_series)
+    win_rate = len(winners) / total_count * 100 if total_count else 0.0
+    avg_win = float(winners.mean()) if not winners.empty else 0.0
+    avg_loss = float(losers.mean()) if not losers.empty else 0.0
+    profit_loss_ratio = avg_win / abs(avg_loss) if avg_win > 0 and avg_loss < 0 else np.nan
+    if pd.notna(profit_loss_ratio):
+        profit_loss_text = f"{profit_loss_ratio:.2f}x"
+    elif avg_win > 0:
+        profit_loss_text = "尚無虧損"
+    elif avg_loss < 0:
+        profit_loss_text = "尚無獲利"
+    else:
+        profit_loss_text = "損益持平"
+    expectancy = float(pnl_series.mean()) if total_count else 0.0
+
+    metric_cols = st.columns(4)
+    with metric_cols[0]:
+        render_big_value_card(
+            "勝率",
+            f"{win_rate:.1f}%",
+            "#ef4444" if win_rate >= 50 else "#22c55e",
+            f"{len(winners)} 勝 / {total_count} 筆",
+            card_class="holdings-stat-card",
+        )
+    with metric_cols[1]:
+        render_big_value_card(
+            "盈虧比",
+            profit_loss_text,
+            "#38bdf8",
+            f"均賺 ${avg_win:,.0f}｜均虧 ${avg_loss:,.0f}",
+            card_class="holdings-stat-card",
+        )
+    with metric_cols[2]:
+        render_big_value_card(
+            "單筆期望值",
+            f"${expectancy:+,.0f}",
+            tw_profit_color(expectancy),
+            "每完成一輪的平均損益",
+            card_class="holdings-stat-card",
+        )
+    with metric_cols[3]:
+        render_big_value_card(
+            "平均報酬率",
+            f"{float(return_series.mean()):+.2f}%",
+            tw_profit_color(float(return_series.mean())),
+            f"共 {total_count} 筆已結案交易",
+            card_class="holdings-stat-card",
+        )
+
+    plot_df = analytics_df.copy()
+    plot_df["損益方向"] = np.where(plot_df["結算損益"] >= 0, "獲利", "虧損")
+    plot_df["投入資金"] = pd.to_numeric(plot_df["投入資金"], errors="coerce").fillna(0.0)
+    plot_df["持有天數"] = pd.to_numeric(plot_df["持有天數"], errors="coerce").fillna(0).astype(int)
+    plot_df["報酬率 (%)"] = pd.to_numeric(plot_df["報酬率 (%)"], errors="coerce").fillna(0.0)
+
+    responsive_plot_config = {"responsive": True, "displayModeBar": False}
+    chart_left, chart_right = st.container(), st.container()
+    with chart_left:
+        fig_holding = px.scatter(
+            plot_df,
+            x="持有天數",
+            y="報酬率 (%)",
+            color="損益方向",
+            size="投入資金",
+            size_max=28,
+            color_discrete_map={"獲利": "#ef4444", "虧損": "#22c55e"},
+            hover_data={
+                "標的": True,
+                "輪次": True,
+                "進場日": True,
+                "出場日": True,
+                "結算損益": ":+,.0f",
+                "投入資金": ":,.0f",
+                "損益方向": False,
+            },
+            title="持有天數與報酬率的關係圖",
+            template="plotly_dark",
+        )
+        fig_holding.update_layout(
+            autosize=True,
+            height=430,
+            margin=dict(t=52, b=48, l=44, r=18),
+            legend=dict(orientation="h", y=1.02, x=0),
+            font=dict(size=12),
+        )
+        fig_holding.update_xaxes(title="持有天數", dtick=1, rangemode="tozero")
+        fig_holding.update_yaxes(title="結案報酬率", ticksuffix="%", zeroline=True)
+        st.plotly_chart(fig_holding, use_container_width=True, config=responsive_plot_config)
+
+    with chart_right:
+        score_long_df = plot_df.melt(
+            id_vars=["標的", "輪次", "進場日", "出場日", "結算損益", "報酬率 (%)"],
+            value_vars=["平均產業評分", "平均籌碼評分", "平均技術評分"],
+            var_name="評分面向",
+            value_name="平均評分",
+        ).dropna(subset=["平均評分"])
+        score_long_df["評分面向"] = score_long_df["評分面向"].replace(
+            {
+                "平均產業評分": "產業/題材",
+                "平均籌碼評分": "籌碼",
+                "平均技術評分": "技術",
+            }
+        )
+        score_long_df["平均評分"] = (
+            pd.to_numeric(score_long_df["平均評分"], errors="coerce")
+            .clip(lower=1, upper=5)
+        )
+        score_long_df = score_long_df.dropna(subset=["平均評分"])
+        if score_long_df.empty:
+            st.warning("這個資金池有已結案交易，但交易紀錄裡沒有可用的三大評分，因此暫時無法畫評分散佈圖。")
+            return
+
+        score_long_df["損益方向"] = np.where(score_long_df["結算損益"] >= 0, "獲利", "虧損")
+        score_long_df["同分序號"] = score_long_df.groupby(
+            ["評分面向", "平均評分"],
+            sort=False,
+        ).cumcount()
+        score_long_df["同分總數"] = score_long_df.groupby(
+            ["評分面向", "平均評分"],
+            sort=False,
+        )["平均評分"].transform("count")
+        score_long_df["評分顯示位置"] = score_long_df["平均評分"] + (
+            score_long_df["同分序號"] - (score_long_df["同分總數"] - 1) / 2
+        ).clip(-4, 4) * 0.045
+        st.caption(
+            f"圖表資料：已結案 {len(plot_df)} 輪，三大評分散點 {len(score_long_df)} 個。"
+            "若很多點集中在 3 分附近，代表歷史交易大多使用中性預設評分。"
+        )
+        fig_score = px.scatter(
+            score_long_df,
+            x="評分顯示位置",
+            y="結算損益",
+            color="損益方向",
+            facet_row="評分面向",
+            color_discrete_map={
+                "獲利": "#ef4444",
+                "虧損": "#22c55e",
+            },
+            category_orders={"評分面向": ["技術", "籌碼", "產業/題材"]},
+            hover_data={
+                "標的": True,
+                "輪次": True,
+                "進場日": True,
+                "出場日": True,
+                "平均評分": ":.2f",
+                "評分顯示位置": False,
+                "報酬率 (%)": ":+.2f",
+                "結算損益": ":+,.0f",
+                "損益方向": False,
+            },
+            labels={"評分顯示位置": "平均信心評分", "結算損益": "最終結算損益"},
+            title="三大信心評分與最終損益的散佈圖",
+            template="plotly_dark",
+        )
+        fig_score.update_traces(marker=dict(size=15, opacity=0.78, line=dict(width=1, color="#0f172a")))
+        fig_score.add_hline(y=0, line_dash="dash", line_color="#64748b", line_width=1)
+        fig_score.for_each_annotation(
+            lambda annotation: annotation.update(text=annotation.text.split("=")[-1])
+        )
+        fig_score.update_layout(
+            autosize=True,
+            height=620,
+            margin=dict(t=58, b=48, l=58, r=18),
+            legend=dict(orientation="h", y=1.02, x=0),
+            font=dict(size=12),
+        )
+        fig_score.update_xaxes(title="平均信心評分", range=[0.7, 5.3], dtick=1)
+        fig_score.update_yaxes(title="最終結算損益", tickprefix="$", zeroline=True)
+        st.plotly_chart(fig_score, use_container_width=True, config=responsive_plot_config)
+        st.caption(
+            "閱讀方式：每一列是一個評分面向；點越靠右代表該面向信心越高，越往上代表該輪交易最終損益越好。"
+        )
+
+    with st.expander("查看已完成交易明細", expanded=False):
+        table_df = analytics_df[
+            [
+                "標的",
+                "輪次",
+                "進場日",
+                "出場日",
+                "持有天數",
+                "投入資金",
+                "結算損益",
+                "報酬率 (%)",
+                "平均產業評分",
+                "平均籌碼評分",
+                "平均技術評分",
+            ]
+        ].copy()
+        st.dataframe(
+            table_df.style.format(
+                {
+                    "投入資金": "${:,.0f}",
+                    "結算損益": "${:+,.0f}",
+                    "報酬率 (%)": "{:+.2f}%",
+                    "平均產業評分": "{:.2f}",
+                    "平均籌碼評分": "{:.2f}",
+                    "平均技術評分": "{:.2f}",
+                },
+                na_rep="-",
+            ).map(
+                lambda v: f"color: {tw_profit_color(float(v))}"
+                if pd.notna(pd.to_numeric(v, errors="coerce"))
+                else "color: white",
+                subset=["結算損益", "報酬率 (%)"],
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=min(420, 76 + 40 * len(table_df)),
+        )
 
 
 # --- UI Configuration & Styling ---
@@ -3575,6 +3939,8 @@ else:
 
     if st.session_state.get("show_trade_entry_dialog") and not st.session_state.get("editing_trade_id"):
         render_trade_entry_dialog(current_pid)
+
+    render_portfolio_refresh_notice(current_pid)
 
     st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
@@ -4665,8 +5031,8 @@ else:
                 all_review_stocks
             )
 
-            t2_tab1, t2_tab2 = st.tabs(
-                ["🎯 單一標的損益追蹤", "📝 所有操作日誌與復盤"]
+            t2_tab1, t2_tab2, t2_tab3 = st.tabs(
+                ["🎯 單一標的損益追蹤", "📈 已完成交易分析", "📝 所有操作日誌與復盤"]
             )
 
             with t2_tab1:
@@ -4946,6 +5312,9 @@ else:
                         render_structured_trade_notes(row.get("trading_notes", ""))
 
             with t2_tab2:
+                render_closed_trade_analytics_panel(t_df, display_names)
+
+            with t2_tab3:
                 st.markdown("### 歷史所有交易流水帳")
                 st.caption(
                     "依日期由最早到最近排列，點開每筆交易可閱讀完整心得、三面向評分，並直接修改原始紀錄。"

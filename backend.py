@@ -3100,6 +3100,21 @@ def summarize_closed_stock_trade_cycles(portfolio_id, stock_id, portfolio_hist_d
                     pd.to_numeric(cycle_df[score_col], errors="coerce").dropna().tolist()
                 )
         avg_score = float(np.mean(score_values)) if score_values else 0.0
+        avg_technical_score = (
+            float(pd.to_numeric(cycle_df.get("technical_score"), errors="coerce").dropna().mean())
+            if "technical_score" in cycle_df.columns
+            else np.nan
+        )
+        avg_chip_score = (
+            float(pd.to_numeric(cycle_df.get("chip_score"), errors="coerce").dropna().mean())
+            if "chip_score" in cycle_df.columns
+            else np.nan
+        )
+        avg_theme_score = (
+            float(pd.to_numeric(cycle_df.get("theme_score"), errors="coerce").dropna().mean())
+            if "theme_score" in cycle_df.columns
+            else np.nan
+        )
         note_nonempty = [
             bool(strip_text)
             for strip_text in cycle_df.get("trading_notes", pd.Series(dtype=str))
@@ -3133,6 +3148,9 @@ def summarize_closed_stock_trade_cycles(portfolio_id, stock_id, portfolio_hist_d
             "停利目標價": take_profit_target,
             "停損目標價": stop_loss_target,
             "平均操作評分": avg_score,
+            "平均技術評分": avg_technical_score,
+            "平均籌碼評分": avg_chip_score,
+            "平均題材評分": avg_theme_score,
             "心得填寫率 (%)": notes_fill_ratio,
             "進場均價": float(entry_amount / entry_rows["shares"].sum()) if not entry_rows.empty and entry_rows["shares"].sum() > 0 else 0.0,
             "出場均價": float(exit_amount / exit_rows["shares"].sum()) if not exit_rows.empty and exit_rows["shares"].sum() > 0 else 0.0,
