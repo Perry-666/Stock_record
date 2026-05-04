@@ -3883,10 +3883,15 @@ else:
         )
         if st.session_state.get("official_nav_sync_signature") != nav_sync_signature:
             with st.spinner("同步收盤後正式 NAV 中..."):
-                ensure_portfolios_official_nav_synced(
+                nav_sync_result = ensure_portfolios_official_nav_synced(
                     portfolios_df["id"].tolist(),
                     target_date=official_nav_date,
                 )
+            if (
+                int(nav_sync_result.get("synced", 0) or 0) > 0
+                or nav_sync_result.get("holiday_deleted_dates")
+            ):
+                invalidate_portfolio_runtime_bundle()
             st.session_state["official_nav_sync_signature"] = nav_sync_signature
 
         portfolios_df = portfolios_df.sort_values("id", kind="stable").reset_index(
